@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Heart, Calendar, Clock, BookOpen, ChevronRight, ChevronLeft, Save, Quote, Settings, Gift, Loader2, X } from 'lucide-react';
 import { JournalEntry, Book } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { updateApiConfig, sendMessage } from '../services/geminiService';
+import { updateApiConfig, sendMessage, fetchModels } from '../services/geminiService';
 import Markdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 
@@ -49,6 +49,8 @@ export default function Companion({
   const [journalToDelete, setJournalToDelete] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<'idle'|'testing'|'success'|'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
 
   const daysTogether = Math.max(1, Math.ceil((Date.now() - startDate) / (1000 * 60 * 60 * 24)));
   const finishedBooks = books.filter(b => b.progress === 100 || b.status === 'finished').length;
@@ -137,7 +139,8 @@ export default function Companion({
   const [apiConfig, setApiConfig] = useState({
     geminiKey: process.env.GEMINI_API_KEY || '',
     baseUrl: 'https://generativelanguage.googleapis.com',
-    ttsProvider: 'openai',
+    model: 'gemini-1.5-flash',
+    ttsProvider: 'none',
     ttsKey: '',
     ttsVoiceId: 'alloy'
   });
@@ -150,7 +153,8 @@ export default function Companion({
   const handleSaveApi = () => {
     updateApiConfig({
       apiKey: apiConfig.geminiKey,
-      baseUrl: apiConfig.baseUrl
+      baseUrl: apiConfig.baseUrl,
+      model: apiConfig.model
     });
     setView('main');
   };
@@ -162,7 +166,8 @@ export default function Companion({
       // Temporarily update config for test
       updateApiConfig({
         apiKey: apiConfig.geminiKey,
-        baseUrl: apiConfig.baseUrl
+        baseUrl: apiConfig.baseUrl,
+        model: apiConfig.model
       });
       const res = await sendMessage('你好，这是一条测试消息。请回复“连接成功”。');
       setTestStatus('success');
@@ -170,6 +175,29 @@ export default function Companion({
     } catch (err: any) {
       setTestStatus('error');
       setTestMessage(err.message || '连接失败，请检查配置。');
+    }
+  };
+
+  const handleFetchModels = async () => {
+    setIsFetchingModels(true);
+    setTestMessage('');
+    try {
+      updateApiConfig({
+        apiKey: apiConfig.geminiKey,
+        baseUrl: apiConfig.baseUrl
+      });
+      const models = await fetchModels();
+      setAvailableModels(models);
+      if (models.length > 0 && !models.includes(apiConfig.model)) {
+        setApiConfig({ ...apiConfig, model: models[0] });
+      }
+      setTestStatus('success');
+      setTestMessage(`成功获取 ${models.length} 个模型`);
+    } catch (err: any) {
+      setTestStatus('error');
+      setTestMessage(err.message || '获取模型失败，请检查 URL 和 Key');
+    } finally {
+      setIsFetchingModels(false);
     }
   };
 
@@ -353,6 +381,7 @@ export default function Companion({
                       className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif"
                       placeholder="https://api.openai.com/v1"
                     />
+                    <p className="text-[10px] text-gray-400 mt-1 font-serif">支持 OpenAI 兼容接口。注意：通常需要包含 /v1 (例如 https://api.deepseek.com/v1)。系统会自动处理 /chat/completions。</p>
                   </div>
                   <div>
                     <label className="block text-xs font-serif text-gray-400 mb-1">API Key</label>
@@ -364,12 +393,54 @@ export default function Companion({
                       placeholder="输入你的 API Key..."
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs font-serif text-gray-400 mb-1">模型名称 (Model)</label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={apiConfig.model}
+                          onChange={(e) => setApiConfig({...apiConfig, model: e.target.value})}
+                          className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif pr-10"
+                          placeholder="例如: gemini-1.5-flash, deepseek-chat..."
+                        />
+                        {availableModels.length > 0 && (
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                            <select 
+                              className="w-6 h-6 opacity-0 absolute inset-0 cursor-pointer z-10"
+                              onChange={(e) => setApiConfig({...apiConfig, model: e.target.value})}
+                              value={apiConfig.model}
+                            >
+                              <option value="" disabled>选择模型</option>
+                              {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                            <ChevronRight size={16} className="text-gray-400 rotate-90" />
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={handleFetchModels}
+                        disabled={isFetchingModels || !apiConfig.geminiKey}
+                        className="px-4 rounded-xl bg-[#f4ecd8] text-[#8E2A2A] text-xs font-serif hover:bg-[#eaddc5] disabled:opacity-50 flex items-center gap-1 whitespace-nowrap"
+                        title="从 API 获取可用模型列表"
+                      >
+                        {isFetchingModels ? <Loader2 size={12} className="animate-spin" /> : <BookOpen size={12} />}
+                        自动抓取
+                      </button>
+                    </div>
+                    {availableModels.length > 0 && (
+                      <p className="text-[10px] text-green-600 mt-1 font-serif">已获取 {availableModels.length} 个模型，点击右侧小箭头可快速选择。</p>
+                    )}
+                  </div>
                 </div>
               </section>
 
               {/* TTS Config */}
               <section>
-                <h3 className="text-xs font-serif font-bold text-[#8E2A2A] uppercase tracking-widest mb-4">语音配置 (TTS)</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xs font-serif font-bold text-[#8E2A2A] uppercase tracking-widest">语音配置 (TTS - 可选)</h3>
+                  <span className="text-[10px] font-serif text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">OPTIONAL</span>
+                </div>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-serif text-gray-400 mb-1">语音服务商</label>
@@ -378,31 +449,40 @@ export default function Companion({
                       onChange={(e) => setApiConfig({...apiConfig, ttsProvider: e.target.value as any})}
                       className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif"
                     >
+                      <option value="none">不使用语音 (关闭)</option>
                       <option value="openai">OpenAI TTS</option>
                       <option value="elevenlabs">ElevenLabs</option>
                       <option value="custom">自定义 (OpenAI 兼容)</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-xs font-serif text-gray-400 mb-1">TTS API Key</label>
-                    <input
-                      type="password"
-                      value={apiConfig.ttsKey}
-                      onChange={(e) => setApiConfig({...apiConfig, ttsKey: e.target.value})}
-                      className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif"
-                      placeholder="TTS 服务的 API Key..."
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-serif text-gray-400 mb-1">Voice ID / 模型</label>
-                    <input
-                      type="text"
-                      value={apiConfig.ttsVoiceId}
-                      onChange={(e) => setApiConfig({...apiConfig, ttsVoiceId: e.target.value})}
-                      className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif"
-                      placeholder="例如: alloy, echo, onyx..."
-                    />
-                  </div>
+                  {apiConfig.ttsProvider !== 'none' && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="space-y-4 overflow-hidden"
+                    >
+                      <div>
+                        <label className="block text-xs font-serif text-gray-400 mb-1">TTS API Key</label>
+                        <input
+                          type="password"
+                          value={apiConfig.ttsKey}
+                          onChange={(e) => setApiConfig({...apiConfig, ttsKey: e.target.value})}
+                          className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif"
+                          placeholder="TTS 服务的 API Key..."
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-serif text-gray-400 mb-1">Voice ID / 模型</label>
+                        <input
+                          type="text"
+                          value={apiConfig.ttsVoiceId}
+                          onChange={(e) => setApiConfig({...apiConfig, ttsVoiceId: e.target.value})}
+                          className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif"
+                          placeholder="例如: alloy, echo, onyx..."
+                        />
+                      </div>
+                    </motion.div>
+                  )}
                 </div>
               </section>
               {/* Test Connection */}
