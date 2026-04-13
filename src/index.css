@@ -1,0 +1,199 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;700;900&family=Inter:wght@300;400;500;600&family=Zeyada&family=Zhi+Mang+Xing&family=Long+Cang&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Noto Serif SC", ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-hand: "Zhi Mang Xing", cursive;
+  --font-hand-alt: "Long Cang", cursive;
+  
+  --animate-ink-ripple: ink-ripple 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  --animate-pulse-slow: pulse-slow 4s ease-in-out infinite;
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-fade-in: fade-in 0.5s ease-out forwards;
+  
+  @keyframes ink-ripple {
+    0% {
+      transform: scale(0);
+      opacity: 0.8;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 0;
+    }
+  }
+  
+  @keyframes pulse-slow {
+    0%, 100% {
+      opacity: 0.8;
+      box-shadow: 0 0 12px rgba(212, 175, 55, 0.6);
+    }
+    50% {
+      opacity: 0.4;
+      box-shadow: 0 0 20px rgba(212, 175, 55, 0.2), 0 0 8px rgba(243, 229, 171, 0.4) inset;
+    }
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+body {
+  background-color: #f3f4f6;
+}
+
+/* Paper Texture Background */
+.bg-paper {
+  background-color: #fdfbf7;
+  background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+}
+
+/* Physical Book Cover Styles */
+.book-cover {
+  box-shadow: 4px 4px 15px rgba(0,0,0,0.08), inset 2px 0 8px rgba(255,255,255,0.2);
+  border-radius: 2px 8px 8px 2px;
+  position: relative;
+}
+
+.book-spine {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: linear-gradient(to right, rgba(255,255,255,0.5) 0%, rgba(0,0,0,0.1) 100%);
+  border-radius: 2px 0 0 2px;
+  z-index: 10;
+}
+
+/* Drop Cap for Reading Area */
+.drop-cap > p:first-of-type::first-letter {
+  float: left;
+  font-size: 3.5em;
+  line-height: 0.8;
+  padding-top: 0.1em;
+  padding-right: 0.1em;
+  padding-left: 0.05em;
+  font-weight: 900;
+  color: #8E2A2A;
+  font-family: "Noto Serif SC", serif;
+}
+
+/* Margin Notes - Responsive */
+.margin-note {
+  position: absolute;
+  width: 70px; /* Narrower for mobile */
+  font-size: 0.9rem;
+  line-height: 1.2;
+  opacity: 0.9;
+  pointer-events: none;
+  z-index: 5;
+  transition: all 0.3s ease;
+}
+
+@media (min-width: 640px) {
+  .margin-note {
+    width: 120px;
+    font-size: 1.1rem;
+  }
+}
+
+.margin-note-user {
+  left: -85px; /* Closer for mobile */
+  color: #8E2A2A;
+  font-family: "Zhi Mang Xing", cursive;
+  text-align: right;
+  border-right: 2px solid rgba(142, 42, 42, 0.4);
+  padding-right: 8px;
+}
+
+@media (min-width: 640px) {
+  .margin-note-user {
+    left: -140px;
+    padding-right: 12px;
+  }
+}
+
+.margin-note-ai {
+  right: -85px; /* Closer for mobile */
+  color: #5b4636;
+  font-family: "Long Cang", cursive;
+  text-align: left;
+  border-left: 2px solid rgba(91, 70, 54, 0.4);
+  padding-left: 8px;
+}
+
+@media (min-width: 640px) {
+  .margin-note-ai {
+    right: -140px;
+    padding-left: 12px;
+  }
+}
+
+/* Highlight for annotated text */
+.note-highlight {
+  background-image: linear-gradient(transparent 60%, rgba(212, 175, 55, 0.3) 60%, rgba(212, 175, 55, 0.3) 90%, transparent 90%);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  cursor: pointer;
+  border-bottom: 1px dashed rgba(212, 175, 55, 0.8);
+  padding-bottom: 2px;
+}
+
+/* Handwritten Note Overlay */
+.handwritten-note {
+  background: #fffef0;
+  box-shadow: 0 15px 40px rgba(0,0,0,0.15);
+  transform: rotate(-1deg);
+  border: 1px solid #e5e0d8;
+  font-family: "Zhi Mang Xing", cursive;
+}
+
+/* User Selection - Golden Silk */
+::selection {
+  background-color: rgba(212, 175, 55, 0.25);
+  text-decoration: underline;
+  text-decoration-color: rgba(212, 175, 55, 0.8);
+  text-decoration-style: wavy;
+}
+
+/* AI Highlight Simulation Class */
+.ai-highlight {
+  background-color: rgba(229, 229, 229, 0.15);
+  box-shadow: 0 0 8px 2px rgba(229, 229, 229, 0.2);
+  border-radius: 2px;
+  position: relative;
+}
+
+.ai-highlight::after {
+  content: '✦';
+  position: absolute;
+  right: -16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #a3a3a3;
+  font-size: 12px;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+}
+
+.user-highlight {
+  border-bottom: 1px solid rgba(212, 175, 55, 0.8);
+  position: relative;
+}
+
+.user-highlight::after {
+  content: '•';
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #D4AF37;
+  font-size: 16px;
+}

@@ -1,0 +1,17 @@
+{
+  "name": "心动书架 - 恋人共读",
+  "short_name": "心动书架",
+  "description": "与虚拟恋人一起开启治愈的阅读之旅",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fdfbf7",
+  "theme_color": "#8E2A2A",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2589/2589175.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
