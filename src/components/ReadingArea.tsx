@@ -170,7 +170,27 @@ export default function ReadingArea({
     };
   }, [book.id]);
 
-  const chapters = book.content ? book.content.split('\n\n').filter(p => p.length > 0) : [];
+  const paragraphs = book.content ? book.content.split('\n\n').filter(p => p.trim().length > 0) : [];
+  const chapters = React.useMemo(() => {
+    const extractedChapters: { title: string, index: number }[] = [];
+    paragraphs.forEach((p, idx) => {
+      const text = p.trim();
+      const isChapter = text.length < 50 && (
+        /^第[零一二三四五六七八九十百千万\d]+[章回节卷集部篇]/.test(text) ||
+        /^Chapter\s*\d+/i.test(text) ||
+        (text.length > 0 && text.length < 20 && !text.includes('。') && !text.includes('，'))
+      );
+      if (isChapter) {
+        extractedChapters.push({ title: text, index: idx });
+      }
+    });
+    if (extractedChapters.length === 0 && paragraphs.length > 0) {
+      for (let i = 0; i < paragraphs.length; i += 20) {
+        extractedChapters.push({ title: `片段 ${Math.floor(i/20) + 1}`, index: i });
+      }
+    }
+    return extractedChapters;
+  }, [paragraphs]);
   
   const jumpToChapter = (index: number) => {
     if (scrollRef.current) {
@@ -209,23 +229,37 @@ export default function ReadingArea({
   };
 
   const handleSelection = () => {
-    const selection = window.getSelection();
-    if (selection && selection.toString().trim().length > 0) {
-      const text = selection.toString().trim();
-      setSelectedText(text);
-      
-      const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      
-      setSelectionPos({
-        x: rect.left + rect.width / 2,
-        y: rect.top - 40,
-      });
-    } else {
-      setSelectedText('');
-      setSelectionPos(null);
-    }
+    setTimeout(() => {
+      const selection = window.getSelection();
+      if (selection && selection.toString().trim().length > 0) {
+        const text = selection.toString().trim();
+        setSelectedText(text);
+        
+        try {
+          const range = selection.getRangeAt(0);
+          const rect = range.getBoundingClientRect();
+          
+          setSelectionPos({
+            x: rect.left + rect.width / 2,
+            y: rect.top - 40,
+          });
+        } catch (e) {
+          // Fallback if getRangeAt fails
+          setSelectionPos({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+        }
+      } else {
+        setSelectedText('');
+        setSelectionPos(null);
+      }
+    }, 100); // Small delay for mobile selection to settle
   };
+
+  useEffect(() => {
+    document.addEventListener('selectionchange', handleSelection);
+    return () => {
+      document.removeEventListener('selectionchange', handleSelection);
+    };
+  }, []);
 
   const handleAddManualNote = () => {
     if (!selectedText || !noteText.trim()) return;
@@ -404,12 +438,12 @@ export default function ReadingArea({
               book.content.split('\n\n').map((paragraph, idx) => {
                 // Find chat-based annotations
                 const chatNotes = journalEntries.filter(entry => 
-                  entry.bookTitle === book.title && paragraph.includes(entry.quote)
+                  entry.bookTitle === book.title && (paragraph.includes(entry.quote) || entry.quote.includes(paragraph))
                 );
 
                 // Find manual annotations
                 const manualNotes = (book.annotations || []).filter(ann => 
-                  paragraph.includes(ann.text)
+                  paragraph.includes(ann.text) || ann.text.includes(paragraph)
                 );
 
                 const allNotes = [
@@ -424,7 +458,9 @@ export default function ReadingArea({
                     const newParts: React.ReactNode[] = [];
                     renderedParts.forEach((part, pIdx) => {
                       if (typeof part === 'string') {
-                        const split = part.split(note.text);
+                        // If the note text is longer than the paragraph, we just highlight the whole paragraph
+                        const matchText = note.text.includes(paragraph) ? paragraph : note.text;
+                        const split = part.split(matchText);
                         split.forEach((s, i) => {
                           newParts.push(s);
                           if (i < split.length - 1) {
@@ -440,7 +476,7 @@ export default function ReadingArea({
                                     }
                                   }}
                                 >
-                                  {note.text}
+                                  {matchText}
                                 </span>
                                 {/* Inline Expandable Note */}
                                 <AnimatePresence>
@@ -718,22 +754,16 @@ export default function ReadingArea({
               <div className="flex-1 overflow-y-auto p-4">
                 {chapters.length > 0 ? (
                   <div className="space-y-1">
-                    {chapters.map((chapter, idx) => {
-                      // Try to find a heading or just use the first few words
-                      const title = chapter.split('\n')[0].substring(0, 30);
-                      const isHeading = chapter.length < 100 && (chapter.includes('第') || chapter.includes('Chapter'));
-                      
-                      return (
-                        <button 
-                          key={idx}
-                          onClick={() => jumpToChapter(idx)}
-                          className={`w-full text-left p-3 rounded-xl transition-colors hover:bg-[#8E2A2A]/5 flex items-center gap-3 ${isHeading ? 'font-bold text-[#8E2A2A]' : 'text-sm'}`}
-                        >
-                          <span className="text-xs text-gray-400 font-mono w-6">{(idx + 1).toString().padStart(2, '0')}</span>
-                          <span className="truncate">{title}{chapter.length > 30 ? '...' : ''}</span>
-                        </button>
-                      );
-                    })}
+                    {chapters.map((chapter, i) => (
+                      <button 
+                        key={i}
+                        onClick={() => jumpToChapter(chapter.index)}
+                        className={`w-full text-left p-3 rounded-xl transition-colors hover:bg-[#8E2A2A]/5 flex items-center gap-3 font-bold text-[#8E2A2A]`}
+                      >
+                        <span className="text-xs text-gray-400 font-mono w-6">{(i + 1).toString().padStart(2, '0')}</span>
+                        <span className="truncate">{chapter.title}</span>
+                      </button>
+                    ))}
                   </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-gray-400 text-sm italic">

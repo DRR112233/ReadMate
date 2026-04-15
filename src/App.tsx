@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import ReadingArea from './components/ReadingArea';
 import Bookshelf from './components/Bookshelf';
 import Companion from './components/Companion';
-import { Message, Book, JournalEntry, DEFAULT_STORY, DEFAULT_PERSONA } from './types';
+import { Message, Book, JournalEntry, Memo, DEFAULT_STORY, DEFAULT_PERSONA } from './types';
 import { initChat, sendMessage } from './services/geminiService';
 import { Library, BookOpen, Heart } from 'lucide-react';
 
@@ -21,6 +21,10 @@ export default function App() {
   });
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>(() => {
     const saved = localStorage.getItem('app_journals');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [memos, setMemos] = useState<Memo[]>(() => {
+    const saved = localStorage.getItem('app_memos');
     return saved ? JSON.parse(saved) : [];
   });
 
@@ -57,6 +61,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('app_journals', JSON.stringify(journalEntries));
   }, [journalEntries]);
+
+  useEffect(() => {
+    localStorage.setItem('app_memos', JSON.stringify(memos));
+  }, [memos]);
 
   useEffect(() => {
     localStorage.setItem('app_persona', persona);
@@ -154,6 +162,8 @@ export default function App() {
               persona={persona} 
               setPersona={setPersona} 
               journalEntries={journalEntries} 
+              memos={memos}
+              setMemos={setMemos}
               onUpdateJournal={(entry) => setJournalEntries(prev => prev.map(e => e.id === entry.id ? entry : e))}
               onDeleteJournal={(id) => setJournalEntries(prev => prev.filter(e => e.id !== id))}
               onAddTaBook={handleAddTaBook}

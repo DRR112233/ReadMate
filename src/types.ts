@@ -31,6 +31,14 @@ export interface Annotation {
   paragraphIdx: number;
 }
 
+export interface Memo {
+  id: string;
+  content: string;
+  timestamp: number;
+  aiComment?: string;
+  isCompleted?: boolean;
+}
+
 export interface Book {
   id: string;
   title: string;

@@ -8,8 +8,22 @@ let currentConfig = {
   model: 'gemini-1.5-flash'
 };
 
+try {
+  const savedConfig = localStorage.getItem('app_apiConfig');
+  if (savedConfig) {
+    currentConfig = { ...currentConfig, ...JSON.parse(savedConfig) };
+  }
+} catch (e) {
+  console.error("Failed to load API config", e);
+}
+
 export const updateApiConfig = (config: { apiKey: string, baseUrl: string, model?: string }) => {
   currentConfig = { ...currentConfig, ...config };
+  try {
+    localStorage.setItem('app_apiConfig', JSON.stringify(currentConfig));
+  } catch (e) {
+    console.error("Failed to save API config", e);
+  }
   // Re-initialize if using Google SDK
   if (currentConfig.baseUrl.includes('googleapis.com')) {
     ai = new GoogleGenAI({ apiKey: currentConfig.apiKey });
@@ -21,17 +35,18 @@ export const initChat = (storyContext: string, persona: string) => {
 
   if (currentConfig.baseUrl.includes('googleapis.com')) {
     if (!ai) ai = new GoogleGenAI({ apiKey: currentConfig.apiKey });
-    chatInstance = ai.chats.create({
+    const model = ai.getGenerativeModel({
       model: currentConfig.model || "gemini-1.5-flash",
       config: {
         systemInstruction: systemPrompt,
       }
     });
+    chatInstance = model.startChat();
   } else {
     // For third-party APIs, we'll use a simple message history array
     chatInstance = {
       history: [{ role: 'system', content: systemPrompt }],
-      sendMessage: async (msg: any) => {
+      sendMessage: async (message: string) => {
         // Clean up base URL - remove trailing slash and /chat/completions if present
         let cleanBaseUrl = currentConfig.baseUrl.trim().replace(/\/+$/, '');
         if (!cleanBaseUrl.endsWith('/chat/completions') && !cleanBaseUrl.includes('googleapis.com')) {
@@ -46,7 +61,7 @@ export const initChat = (storyContext: string, persona: string) => {
           },
           body: JSON.stringify({
             model: currentConfig.model || 'gpt-3.5-turbo',
-            messages: [...chatInstance.history, { role: 'user', content: msg.message }]
+            messages: [...chatInstance.history, { role: 'user', content: message }]
           })
         });
 
@@ -57,9 +72,9 @@ export const initChat = (storyContext: string, persona: string) => {
 
         const data = await response.json();
         const text = data.choices[0].message.content;
-        chatInstance.history.push({ role: 'user', content: msg.message });
+        chatInstance.history.push({ role: 'user', content: message });
         chatInstance.history.push({ role: 'assistant', content: text });
-        return { text };
+        return { response: { text: () => text } };
       }
     };
   }
@@ -134,6 +149,14 @@ export const sendMessage = async (message: string) => {
       return data.choices[0].message.content;
     }
   }
-  const response = await chatInstance.sendMessage(message);
-  return response.text;
+  
+  try {
+    const result = await chatInstance.sendMessage(message);
+    // Standardize response format: Google SDK returns result.response.text(), 
+    // our mock third-party chatInstance returns result.response.text() as well now
+    return typeof result.response.text === 'function' ? result.response.text() : result.response.text;
+  } catch (error) {
+    console.error("SendMessage failed:", error);
+    throw error;
+  }
 };

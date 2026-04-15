@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Heart, Calendar, Clock, BookOpen, ChevronRight, ChevronLeft, Save, Quote, Settings, Gift, Loader2, X } from 'lucide-react';
-import { JournalEntry, Book } from '../types';
+import { JournalEntry, Book, Memo } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { updateApiConfig, sendMessage, fetchModels } from '../services/geminiService';
 import Markdown from 'react-markdown';
@@ -10,6 +10,8 @@ interface CompanionProps {
   persona: string;
   setPersona: (p: string) => void;
   journalEntries: JournalEntry[];
+  memos: Memo[];
+  setMemos: React.Dispatch<React.SetStateAction<Memo[]>>;
   onUpdateJournal: (entry: JournalEntry) => void;
   onDeleteJournal: (id: string) => void;
   onAddTaBook: (book: Book) => void;
@@ -22,12 +24,14 @@ interface CompanionProps {
   books: Book[];
 }
 
-type View = 'main' | 'persona' | 'journal' | 'api-settings' | 'gifts' | 'profile';
+type View = 'main' | 'persona' | 'journal' | 'api-settings' | 'gifts' | 'profile' | 'memos';
 
 export default function Companion({ 
   persona, 
   setPersona, 
   journalEntries, 
+  memos,
+  setMemos,
   onUpdateJournal,
   onDeleteJournal,
   onAddTaBook,
@@ -136,14 +140,57 @@ export default function Companion({
   };
   
   // API Config State
-  const [apiConfig, setApiConfig] = useState({
-    geminiKey: process.env.GEMINI_API_KEY || '',
-    baseUrl: 'https://generativelanguage.googleapis.com',
-    model: 'gemini-1.5-flash',
-    ttsProvider: 'none',
-    ttsKey: '',
-    ttsVoiceId: 'alloy'
+  const [apiConfig, setApiConfig] = useState(() => {
+    const saved = localStorage.getItem('app_apiConfig');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        geminiKey: parsed.apiKey || process.env.GEMINI_API_KEY || '',
+        baseUrl: parsed.baseUrl || 'https://generativelanguage.googleapis.com',
+        model: parsed.model || 'gemini-1.5-flash',
+        ttsProvider: parsed.ttsProvider || 'none',
+        ttsKey: parsed.ttsKey || '',
+        ttsVoiceId: parsed.ttsVoiceId || 'alloy'
+      };
+    }
+    return {
+      geminiKey: process.env.GEMINI_API_KEY || '',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-1.5-flash',
+      ttsProvider: 'none',
+      ttsKey: '',
+      ttsVoiceId: 'alloy'
+    };
   });
+
+  const [apiPresets, setApiPresets] = useState<any[]>(() => {
+    const saved = localStorage.getItem('app_apiPresets');
+    return saved ? JSON.parse(saved) : [
+      { name: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-1.5-flash' },
+      { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+      { name: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V2.5' }
+    ];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('app_apiPresets', JSON.stringify(apiPresets));
+  }, [apiPresets]);
+
+  const handleSavePreset = () => {
+    const name = prompt("请输入预设名称：");
+    if (name) {
+      setApiPresets([...apiPresets, { name, baseUrl: apiConfig.baseUrl, model: apiConfig.model, apiKey: apiConfig.geminiKey }]);
+    }
+  };
+
+  const handleLoadPreset = (preset: any) => {
+    setApiConfig({
+      ...apiConfig,
+      baseUrl: preset.baseUrl,
+      model: preset.model,
+      geminiKey: preset.apiKey || apiConfig.geminiKey
+    });
+  };
 
   const handleSavePersona = () => {
     setPersona(tempPersona);
@@ -156,6 +203,15 @@ export default function Companion({
       baseUrl: apiConfig.baseUrl,
       model: apiConfig.model
     });
+    // Also save TTS config to localStorage
+    localStorage.setItem('app_apiConfig', JSON.stringify({
+      apiKey: apiConfig.geminiKey,
+      baseUrl: apiConfig.baseUrl,
+      model: apiConfig.model,
+      ttsProvider: apiConfig.ttsProvider,
+      ttsKey: apiConfig.ttsKey,
+      ttsVoiceId: apiConfig.ttsVoiceId
+    }));
     setView('main');
   };
 
@@ -335,6 +391,26 @@ export default function Companion({
               </button>
 
               <button 
+                onClick={() => setView('memos')}
+                className="flex items-center justify-between p-4 bg-white rounded-2xl border border-[#e5e0d8] shadow-sm active:scale-[0.98] transition-transform"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-[#f4ecd8] flex items-center justify-center text-[#8E2A2A]">
+                    <BookOpen size={16} />
+                  </div>
+                  <span className="text-sm font-serif font-medium text-[#2c2826]">便签记录</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {memos && memos.length > 0 && (
+                    <span className="text-xs bg-[#f4ecd8] text-[#8E2A2A] px-2 py-0.5 rounded-full">
+                      {memos.length} 条
+                    </span>
+                  )}
+                  <ChevronRight size={18} className="text-gray-300" />
+                </div>
+              </button>
+
+              <button 
                 onClick={() => setView('api-settings')}
                 className="flex items-center justify-between p-4 bg-white rounded-2xl border border-[#e5e0d8] shadow-sm active:scale-[0.98] transition-transform"
               >
@@ -368,6 +444,25 @@ export default function Companion({
               </button>
             </div>
             <div className="flex-1 p-6 overflow-y-auto space-y-8">
+              {/* API Presets */}
+              <section>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xs font-serif font-bold text-[#8E2A2A] uppercase tracking-widest">API 预设</h3>
+                  <button onClick={handleSavePreset} className="text-xs text-[#8E2A2A] bg-[#f4ecd8] px-2 py-1 rounded-md font-serif">保存当前为预设</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {apiPresets.map((preset, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleLoadPreset(preset)}
+                      className="px-3 py-1.5 text-xs font-serif rounded-lg border border-[#e5e0d8] bg-white hover:bg-[#f4ecd8] hover:text-[#8E2A2A] transition-colors"
+                    >
+                      {preset.name}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
               {/* LLM Config */}
               <section>
                 <h3 className="text-xs font-serif font-bold text-[#8E2A2A] uppercase tracking-widest mb-4">模型配置 (LLM)</h3>
@@ -703,6 +798,92 @@ export default function Companion({
                 </>
               )}
             </AnimatePresence>
+          </motion.div>
+        )}
+
+        {view === 'memos' && (
+          <motion.div 
+            key="memos"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            className="absolute inset-0 bg-paper flex flex-col z-10"
+          >
+            <div className="flex items-center px-4 py-3 bg-white border-b border-[#e5e0d8]">
+              <button onClick={() => setView('main')} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full">
+                <ChevronLeft size={24} />
+              </button>
+              <span className="text-sm font-serif font-medium text-gray-800 ml-2">便签记录</span>
+            </div>
+            <div className="flex-1 p-6 overflow-y-auto space-y-6">
+              <div className="bg-white rounded-2xl p-4 shadow-sm border border-[#e5e0d8]">
+                <textarea
+                  value={editJournalText}
+                  onChange={(e) => setEditJournalText(e.target.value)}
+                  placeholder="写下你的随笔或待办..."
+                  className="w-full p-2 text-sm font-serif focus:outline-none resize-none min-h-[80px]"
+                />
+                <div className="flex justify-end mt-2">
+                  <button 
+                    onClick={async () => {
+                      if (!editJournalText.trim()) return;
+                      const newMemo: Memo = {
+                        id: Date.now().toString(),
+                        content: editJournalText,
+                        timestamp: Date.now(),
+                      };
+                      setMemos([newMemo, ...memos]);
+                      setEditJournalText('');
+                      // Ask AI to comment occasionally (e.g., 50% chance)
+                      if (Math.random() > 0.5) {
+                        try {
+                          const aiRes = await sendMessage(`用户写了一条便签：“${newMemo.content}”。请给出一句简短、温馨的评论或鼓励。`);
+                          setMemos(prev => prev.map(m => m.id === newMemo.id ? { ...m, aiComment: aiRes } : m));
+                        } catch (e) {
+                          console.error(e);
+                        }
+                      }
+                    }}
+                    className="px-4 py-1.5 text-xs font-serif bg-[#8E2A2A] text-white rounded-lg shadow-sm"
+                  >
+                    记录
+                  </button>
+                </div>
+              </div>
+
+              {memos.length === 0 ? (
+                <div className="flex flex-col items-center justify-center text-gray-400 py-10">
+                  <BookOpen size={48} className="mb-4 opacity-20" />
+                  <p className="text-sm font-serif">还没有便签哦</p>
+                </div>
+              ) : (
+                memos.map(memo => (
+                  <div key={memo.id} className="bg-white rounded-2xl p-4 shadow-sm border border-[#e5e0d8]">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-serif text-gray-400">{new Date(memo.timestamp).toLocaleString()}</span>
+                      <button 
+                        onClick={() => setMemos(memos.filter(m => m.id !== memo.id))}
+                        className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <p className="text-sm text-[#2c2826] font-serif whitespace-pre-wrap mb-3">{memo.content}</p>
+                    {memo.aiComment && (
+                      <div className="bg-[#f4ecd8]/50 rounded-xl p-3 border border-[#eaddc5]">
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="w-5 h-5 rounded-full bg-[#8E2A2A]/10 flex items-center justify-center text-[#8E2A2A]">
+                            <Heart size={10} fill="currentColor" />
+                          </div>
+                          <span className="text-xs font-serif font-medium text-[#8E2A2A]">{companionName}</span>
+                        </div>
+                        <p className="text-xs text-gray-600 font-serif ml-7">{memo.aiComment}</p>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
