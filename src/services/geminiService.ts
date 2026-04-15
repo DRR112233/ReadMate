@@ -24,6 +24,10 @@ export const updateApiConfig = (config: { apiKey: string, baseUrl: string, model
   } catch (e) {
     console.error("Failed to save API config", e);
   }
+  
+  // Clear chat instance to force re-initialization with new config
+  chatInstance = null;
+  
   // Re-initialize if using Google SDK
   if (currentConfig.baseUrl.includes('googleapis.com')) {
     ai = new GoogleGenAI({ apiKey: currentConfig.apiKey });

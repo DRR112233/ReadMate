@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Message, Book } from '../types';
-import { MessageCircleHeart, ChevronLeft, Settings, Heart, X, Type, Moon, Sun, Coffee, Bookmark, PenTool, MessageCircle, List } from 'lucide-react';
+import { MessageCircleHeart, ChevronLeft, Settings, Heart, X, Type, Moon, Sun, Coffee, Bookmark, PenTool, MessageCircle, List, Send, Loader2 } from 'lucide-react';
 import { sendMessage } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import ChatArea from './ChatArea';
@@ -48,7 +48,39 @@ export default function ReadingArea({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showBookmarkToast, setShowBookmarkToast] = useState(false);
   const [showTaNote, setShowTaNote] = useState(book.isTaRecommendation && !book.hasSeenNote);
-  const [expandedParagraph, setExpandedParagraph] = useState<string | null>(null);
+  const [replyingToNoteId, setReplyingToNoteId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [isReplying, setIsReplying] = useState(false);
+
+  const handleInlineReply = async (noteId: string, quote: string, existingHistory: Message[] = []) => {
+    if (!replyText.trim() || !onUpdateJournal) return;
+    setIsReplying(true);
+
+    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: replyText, timestamp: Date.now() };
+    const updatedHistory = [...existingHistory, userMsg];
+
+    // Optimistic update
+    const entry = journalEntries.find(e => e.id === noteId);
+    if (entry) {
+      onUpdateJournal({ ...entry, chatHistory: updatedHistory });
+    }
+
+    try {
+      const prompt = `我在读《${book.title}》时，关于这句话：“${quote}”，我回复了你：“${replyText}”。请你作为一个恋人，给我回一条简短、深情且有共鸣的留言。`;
+      const response = await sendMessage(prompt);
+      const aiMsg: Message = { id: Date.now().toString(), sender: 'ai', text: response, timestamp: Date.now() };
+      
+      if (entry) {
+        onUpdateJournal({ ...entry, chatHistory: [...updatedHistory, aiMsg] });
+      }
+    } catch (error) {
+      console.error('Inline reply failed:', error);
+    } finally {
+      setIsReplying(false);
+      setReplyText('');
+      setReplyingToNoteId(null);
+    }
+  };
   const [showTOC, setShowTOC] = useState(false);
   const [readingProgress, setReadingProgress] = useState(book.progress || 0);
   
@@ -279,45 +311,51 @@ export default function ReadingArea({
     const quoteToUse = activeQuote || selectedText;
     if (!quoteToUse || !noteText.trim()) return;
 
-    const newAnnotation: Annotation = {
-      id: Math.random().toString(36).substr(2, 9),
-      bookId: book.id,
-      text: quoteToUse,
-      comment: noteText,
-      sender: 'user',
-      timestamp: Date.now(),
-      paragraphIdx: 0 // Simplified
-    };
+    const newJournalId = Date.now().toString();
+    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: noteText, timestamp: Date.now() };
 
-    const updatedBook = {
-      ...book,
-      annotations: [...(book.annotations || []), newAnnotation]
-    };
-
-    onUpdateBook(updatedBook);
+    // Optimistically save journal with just user note
+    onSaveJournal({
+      id: newJournalId,
+      quote: quoteToUse,
+      userNote: noteText,
+      aiResponse: '...', // Placeholder until AI replies
+      date: Date.now(),
+      bookTitle: book.title,
+      chatHistory: [userMsg]
+    });
     
     // Trigger AI response to the user's note
     const triggerAiReply = async () => {
       try {
         const prompt = `我在读《${book.title}》时，看到这句话：“${quoteToUse}”。我写下了这段批注：“${noteText}”。请你作为一个恋人，针对我的批注或者这段话，给我回一条简短、深情且有共鸣的留言（50字以内）。`;
         const response = await sendMessage(prompt);
+        const aiMsg: Message = { id: Date.now().toString(), sender: 'ai', text: response, timestamp: Date.now() };
         
-        const aiAnnotation: Annotation = {
-          id: Math.random().toString(36).substr(2, 9),
-          bookId: book.id,
-          text: quoteToUse,
-          comment: response,
-          sender: 'ai',
-          timestamp: Date.now(),
-          paragraphIdx: 0
-        };
-
-        onUpdateBook({
-          ...updatedBook,
-          annotations: [...updatedBook.annotations, aiAnnotation]
-        });
+        if (onUpdateJournal) {
+          onUpdateJournal({
+            id: newJournalId,
+            quote: quoteToUse,
+            userNote: noteText,
+            aiResponse: response,
+            date: Date.now(),
+            bookTitle: book.title,
+            chatHistory: [userMsg, aiMsg]
+          });
+        }
       } catch (error) {
         console.error('AI reply to note failed:', error);
+        if (onUpdateJournal) {
+          onUpdateJournal({
+            id: newJournalId,
+            quote: quoteToUse,
+            userNote: noteText,
+            aiResponse: '（TA 暂时走神了，没有回复）',
+            date: Date.now(),
+            bookTitle: book.title,
+            chatHistory: [userMsg]
+          });
+        }
       }
     };
 
@@ -546,7 +584,7 @@ export default function ReadingArea({
                                           </div>
                                           <div className={`pl-8 ${note.sender === 'user' ? 'font-hand text-2xl text-[#8E2A2A] tracking-wide transform -rotate-1' : 'font-serif text-sm text-[#2c2826]'} leading-relaxed`}>
                                             {note.chatHistory && note.chatHistory.length > 0 ? (
-                                              <div className="space-y-3">
+                                              <div className="space-y-3 font-serif text-sm transform-none">
                                                 {note.chatHistory.map((msg, i) => (
                                                   <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
                                                     <span className="text-[10px] text-gray-400 mb-1">{msg.sender === 'user' ? '我' : 'TA'}</span>
@@ -565,20 +603,49 @@ export default function ReadingArea({
                                               note.comment
                                             )}
                                           </div>
-                                          {note.sender === 'ai' && (
-                                            <div className="pl-8 mt-2">
+                                          <div className="pl-8 mt-2">
+                                            {replyingToNoteId === note.id ? (
+                                              <div className="flex flex-col gap-2 mt-2">
+                                                <textarea
+                                                  value={replyText}
+                                                  onChange={(e) => setReplyText(e.target.value)}
+                                                  placeholder="写下你的回复..."
+                                                  className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif resize-none"
+                                                  rows={2}
+                                                  autoFocus
+                                                />
+                                                <div className="flex justify-end gap-2">
+                                                  <button 
+                                                    onClick={() => {
+                                                      setReplyingToNoteId(null);
+                                                      setReplyText('');
+                                                    }}
+                                                    className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg font-serif"
+                                                  >
+                                                    取消
+                                                  </button>
+                                                  <button 
+                                                    onClick={() => handleInlineReply(note.id, note.text, note.chatHistory)}
+                                                    disabled={isReplying || !replyText.trim()}
+                                                    className="px-3 py-1.5 text-xs bg-[#8E2A2A] text-white rounded-lg font-serif disabled:opacity-50 flex items-center gap-1"
+                                                  >
+                                                    {isReplying ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                                                    发送
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            ) : (
                                               <button 
                                                 onClick={(e) => {
                                                   e.stopPropagation();
-                                                  onShare(`关于你的留言：“${note.comment.substring(0, 20)}...”`);
-                                                  setIsChatOpen(true);
+                                                  setReplyingToNoteId(note.id);
                                                 }}
                                                 className="text-xs text-[#8E2A2A] hover:text-[#6b1f1f] font-serif flex items-center gap-1"
                                               >
-                                                <MessageCircle size={12} /> 回复 TA
+                                                <MessageCircle size={12} /> 回复
                                               </button>
-                                            </div>
-                                          )}
+                                            )}
+                                          </div>
                                         </div>
                                       </div>
                                     </motion.div>

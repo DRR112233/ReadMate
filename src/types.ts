@@ -8,6 +8,7 @@ export interface Message {
 export interface JournalEntry {
   id: string;
   quote: string;
+  userNote?: string;
   aiResponse: string;
   date: number;
   bookTitle: string;

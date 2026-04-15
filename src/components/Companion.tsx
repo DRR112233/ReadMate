@@ -57,6 +57,14 @@ export default function Companion({
   const [testMessage, setTestMessage] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [memoAiFrequency, setMemoAiFrequency] = useState(() => {
+    const saved = localStorage.getItem('app_memoAiFrequency');
+    return saved ? parseFloat(saved) : 0.5;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('app_memoAiFrequency', memoAiFrequency.toString());
+  }, [memoAiFrequency]);
 
   const daysTogether = Math.max(1, Math.ceil((Date.now() - startDate) / (1000 * 60 * 60 * 24)));
   const finishedBooks = books.filter(b => b.progress === 100 || b.status === 'finished').length;
@@ -604,6 +612,29 @@ export default function Companion({
                   )}
                 </div>
               </section>
+
+              {/* Behavior Config */}
+              <section>
+                <h3 className="text-xs font-serif font-bold text-[#8E2A2A] uppercase tracking-widest mb-4">行为偏好</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-serif text-gray-400 mb-1">
+                      便签回复频率 ({(memoAiFrequency * 100).toFixed(0)}%)
+                    </label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      value={memoAiFrequency}
+                      onChange={(e) => setMemoAiFrequency(parseFloat(e.target.value))}
+                      className="w-full accent-[#8E2A2A]"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1 font-serif">控制 TA 在你写便签时主动回复的概率。0% 为从不回复，100% 为每次必回。</p>
+                  </div>
+                </div>
+              </section>
+
               {/* Test Connection */}
               <section className="pt-4 border-t border-[#e5e0d8]">
                 <button
@@ -747,6 +778,12 @@ export default function Companion({
                     <p className="text-sm text-gray-600 italic border-l-2 border-[#e5e0d8] pl-3 mb-4 font-serif">
                       "{entry.quote}"
                     </p>
+                    {entry.userNote && (
+                      <div className="mb-4 pl-3">
+                        <span className="text-[10px] text-gray-400 block mb-1">我的批注：</span>
+                        <p className="text-sm font-hand text-2xl text-[#8E2A2A] transform -rotate-1">{entry.userNote}</p>
+                      </div>
+                    )}
                     <div className="flex gap-3">
                       <div className="w-6 h-6 rounded-full bg-[#8E2A2A]/10 flex-shrink-0 flex items-center justify-center text-[#8E2A2A] mt-0.5">
                         <Heart size={10} fill="currentColor" />
@@ -772,6 +809,17 @@ export default function Companion({
                               保存
                             </button>
                           </div>
+                        </div>
+                      ) : entry.chatHistory && entry.chatHistory.length > 0 ? (
+                        <div className="flex-1 space-y-3">
+                          {entry.chatHistory.map((msg, i) => (
+                            <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                              <span className="text-[10px] text-gray-400 mb-1">{msg.sender === 'user' ? '我' : 'TA'}</span>
+                              <div className={`px-3 py-2 rounded-xl text-sm ${msg.sender === 'user' ? 'bg-[#8E2A2A] text-white' : 'bg-gray-100 text-[#2c2826]'}`}>
+                                {msg.text}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       ) : (
                         <div 
@@ -858,8 +906,8 @@ export default function Companion({
                       };
                       setMemos([newMemo, ...memos]);
                       setEditJournalText('');
-                      // Ask AI to comment occasionally (e.g., 50% chance)
-                      if (Math.random() > 0.5) {
+                      // Ask AI to comment based on frequency
+                      if (Math.random() < memoAiFrequency) {
                         try {
                           const aiRes = await sendMessage(`用户写了一条便签：“${newMemo.content}”。请给出一句简短、温馨的评论或鼓励。`);
                           setMemos(prev => prev.map(m => m.id === newMemo.id ? { ...m, aiComment: aiRes } : m));
