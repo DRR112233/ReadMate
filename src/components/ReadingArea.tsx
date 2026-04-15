@@ -16,6 +16,7 @@ interface ReadingAreaProps {
   onImportBook: (book: Book) => void;
   onShare: (text: string) => void;
   onSaveJournal: (entry: import('../types').JournalEntry) => void;
+  onUpdateJournal?: (entry: import('../types').JournalEntry) => void;
   companionName: string;
   companionAvatar: string;
 }
@@ -30,6 +31,7 @@ export default function ReadingArea({
   onImportBook, 
   onShare, 
   onSaveJournal,
+  onUpdateJournal,
   companionName,
   companionAvatar
 }: ReadingAreaProps) {
@@ -38,8 +40,10 @@ export default function ReadingArea({
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isChatMinimized, setIsChatMinimized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]); // Internal messages for this session
+  const [activeJournalId, setActiveJournalId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showNoteInput, setShowNoteInput] = useState(false);
+  const [activeQuote, setActiveQuote] = useState('');
   const [noteText, setNoteText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showBookmarkToast, setShowBookmarkToast] = useState(false);
@@ -127,6 +131,16 @@ export default function ReadingArea({
     return () => clearInterval(timer);
   }, [book.id, isChatOpen, aiFrequency]);
 
+  // Sync messages to active journal entry
+  useEffect(() => {
+    if (activeJournalId && messages.length > 0 && onUpdateJournal) {
+      const entry = journalEntries.find(e => e.id === activeJournalId);
+      if (entry) {
+        onUpdateJournal({ ...entry, chatHistory: messages });
+      }
+    }
+  }, [messages, activeJournalId]);
+
   // Restore scroll position on mount
   useEffect(() => {
     if (scrollRef.current && book.lastReadPosition) {
@@ -170,7 +184,7 @@ export default function ReadingArea({
     };
   }, [book.id]);
 
-  const paragraphs = book.content ? book.content.split('\n\n').filter(p => p.trim().length > 0) : [];
+  const paragraphs = book.content ? book.content.split('\n').filter(p => p.trim().length > 0) : [];
   const chapters = React.useMemo(() => {
     const extractedChapters: { title: string, index: number }[] = [];
     paragraphs.forEach((p, idx) => {
@@ -178,15 +192,15 @@ export default function ReadingArea({
       const isChapter = text.length < 50 && (
         /^第[零一二三四五六七八九十百千万\d]+[章回节卷集部篇]/.test(text) ||
         /^Chapter\s*\d+/i.test(text) ||
-        (text.length > 0 && text.length < 20 && !text.includes('。') && !text.includes('，'))
+        (text.length > 0 && text.length < 20 && !text.includes('。') && !text.includes('，') && !text.includes('”') && !text.includes('？'))
       );
       if (isChapter) {
         extractedChapters.push({ title: text, index: idx });
       }
     });
     if (extractedChapters.length === 0 && paragraphs.length > 0) {
-      for (let i = 0; i < paragraphs.length; i += 20) {
-        extractedChapters.push({ title: `片段 ${Math.floor(i/20) + 1}`, index: i });
+      for (let i = 0; i < paragraphs.length; i += 30) {
+        extractedChapters.push({ title: `片段 ${Math.floor(i/30) + 1}`, index: i });
       }
     }
     return extractedChapters;
@@ -262,12 +276,13 @@ export default function ReadingArea({
   }, []);
 
   const handleAddManualNote = () => {
-    if (!selectedText || !noteText.trim()) return;
+    const quoteToUse = activeQuote || selectedText;
+    if (!quoteToUse || !noteText.trim()) return;
 
     const newAnnotation: Annotation = {
       id: Math.random().toString(36).substr(2, 9),
       bookId: book.id,
-      text: selectedText,
+      text: quoteToUse,
       comment: noteText,
       sender: 'user',
       timestamp: Date.now(),
@@ -284,13 +299,13 @@ export default function ReadingArea({
     // Trigger AI response to the user's note
     const triggerAiReply = async () => {
       try {
-        const prompt = `我在读《${book.title}》时，看到这句话：“${selectedText}”。我写下了这段批注：“${noteText}”。请你作为一个恋人，针对我的批注或者这段话，给我回一条简短、深情且有共鸣的留言（50字以内）。`;
+        const prompt = `我在读《${book.title}》时，看到这句话：“${quoteToUse}”。我写下了这段批注：“${noteText}”。请你作为一个恋人，针对我的批注或者这段话，给我回一条简短、深情且有共鸣的留言（50字以内）。`;
         const response = await sendMessage(prompt);
         
         const aiAnnotation: Annotation = {
           id: Math.random().toString(36).substr(2, 9),
           bookId: book.id,
-          text: selectedText,
+          text: quoteToUse,
           comment: response,
           sender: 'ai',
           timestamp: Date.now(),
@@ -312,15 +327,40 @@ export default function ReadingArea({
     setShowNoteInput(false);
     setSelectionPos(null);
     setSelectedText('');
+    setActiveQuote('');
   };
 
   const handleShareSelection = async () => {
-    if (!selectedText) return;
-    onShare(`我看到了这句话：“${selectedText}”`);
+    const quote = activeQuote || selectedText;
+    if (!quote) return;
+    
     setIsChatOpen(true);
     setSelectionPos(null);
     setSelectedText('');
+    setActiveQuote('');
     window.getSelection()?.removeAllRanges();
+
+    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: `我看到了这句话：“${quote}”`, timestamp: Date.now() };
+    setMessages([userMsg]);
+
+    try {
+      const res = await sendMessage(`我看到了这句话：“${quote}”。请你作为一个恋人，针对这句话给我回一条简短、深情的留言。`);
+      const aiMsg: Message = { id: (Date.now() + 1).toString(), sender: 'ai', text: res, timestamp: Date.now() };
+      setMessages(prev => [...prev, aiMsg]);
+      
+      const newJournalId = Date.now().toString();
+      setActiveJournalId(newJournalId);
+      onSaveJournal({
+        id: newJournalId,
+        quote: quote,
+        aiResponse: res,
+        date: Date.now(),
+        bookTitle: book.title,
+        chatHistory: [userMsg, aiMsg]
+      });
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const getThemeStyles = () => {
@@ -435,7 +475,7 @@ export default function ReadingArea({
             )}
 
             {book.content ? (
-              book.content.split('\n\n').map((paragraph, idx) => {
+              paragraphs.map((paragraph, idx) => {
                 // Find chat-based annotations
                 const chatNotes = journalEntries.filter(entry => 
                   entry.bookTitle === book.title && (paragraph.includes(entry.quote) || entry.quote.includes(paragraph))
@@ -447,8 +487,8 @@ export default function ReadingArea({
                 );
 
                 const allNotes = [
-                  ...chatNotes.map(n => ({ id: n.id, text: n.quote, comment: n.aiResponse, sender: 'ai' as const })),
-                  ...manualNotes.map(n => ({ id: n.id, text: n.text, comment: n.comment, sender: n.sender }))
+                  ...chatNotes.map(n => ({ id: n.id, text: n.quote, comment: n.aiResponse, sender: 'ai' as const, chatHistory: n.chatHistory })),
+                  ...manualNotes.map(n => ({ id: n.id, text: n.text, comment: n.comment, sender: n.sender, chatHistory: undefined }))
                 ];
 
                 // Highlight the annotated text within the paragraph
@@ -505,7 +545,18 @@ export default function ReadingArea({
                                             </span>
                                           </div>
                                           <div className={`pl-8 ${note.sender === 'user' ? 'font-hand text-2xl text-[#8E2A2A] tracking-wide transform -rotate-1' : 'font-serif text-sm text-[#2c2826]'} leading-relaxed`}>
-                                            {note.sender === 'ai' ? (
+                                            {note.chatHistory && note.chatHistory.length > 0 ? (
+                                              <div className="space-y-3">
+                                                {note.chatHistory.map((msg, i) => (
+                                                  <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                                                    <span className="text-[10px] text-gray-400 mb-1">{msg.sender === 'user' ? '我' : 'TA'}</span>
+                                                    <div className={`px-3 py-2 rounded-xl text-sm ${msg.sender === 'user' ? 'bg-[#8E2A2A] text-white' : 'bg-white border border-[#e5e0d8] text-[#2c2826]'}`}>
+                                                      <Markdown>{msg.text}</Markdown>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            ) : note.sender === 'ai' ? (
                                               <div 
                                                 className="prose prose-sm prose-p:my-1"
                                                 dangerouslySetInnerHTML={{ __html: note.comment }}
@@ -583,46 +634,7 @@ export default function ReadingArea({
                 <button onClick={() => setShowNoteInput(false)} className="text-gray-400"><X size={20} /></button>
               </div>
               <div className="bg-[#f4ecd8]/30 p-3 rounded-xl mb-4 border-l-4 border-[#8E2A2A]">
-                <p className="text-xs italic text-gray-500 line-clamp-2">"{selectedText}"</p>
-              </div>
-              <textarea 
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                autoFocus
-                className="w-full h-32 p-4 rounded-2xl border border-[#e5e0d8] focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] font-serif text-sm mb-4"
-                placeholder="这一刻，你想到了什么..."
-              />
-              <button 
-                onClick={handleAddManualNote}
-                className="w-full py-3 bg-[#8E2A2A] text-white rounded-full font-serif font-bold flex items-center justify-center gap-2 shadow-lg"
-              >
-                <PenTool size={18} /> 留下墨迹
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Note Input Overlay */}
-      <AnimatePresence>
-        {showNoteInput && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-serif font-bold text-[#8E2A2A]">写下此刻的想法</h3>
-                <button onClick={() => setShowNoteInput(false)} className="text-gray-400"><X size={20} /></button>
-              </div>
-              <div className="bg-[#f4ecd8]/30 p-3 rounded-xl mb-4 border-l-4 border-[#8E2A2A]">
-                <p className="text-xs italic text-gray-500 line-clamp-2">"{selectedText}"</p>
+                <p className="text-xs italic text-gray-500 line-clamp-2">"{activeQuote || selectedText}"</p>
               </div>
               <textarea 
                 value={noteText}
@@ -709,7 +721,10 @@ export default function ReadingArea({
               <span className="text-xs font-serif">分享给 TA</span>
             </button>
             <button 
-              onClick={() => setShowNoteInput(true)}
+              onClick={() => {
+                setActiveQuote(selectedText);
+                setShowNoteInput(true);
+              }}
               className="flex items-center gap-2 bg-white text-[#8E2A2A] px-4 py-2 rounded-full hover:bg-gray-50 transition-colors"
             >
               <PenTool size={16} />

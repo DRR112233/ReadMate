@@ -11,6 +11,7 @@ export interface JournalEntry {
   aiResponse: string;
   date: number;
   bookTitle: string;
+  chatHistory?: Message[];
 }
 
 export interface ApiConfig {
@@ -50,6 +51,7 @@ export interface Book {
   taNote?: string;
   hasSeenNote?: boolean;
   content?: string;
+  originalEpub?: ArrayBuffer; // Store original EPUB for native rendering
   lastReadPosition?: number;
   annotations?: Annotation[];
 }

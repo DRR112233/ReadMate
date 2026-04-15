@@ -91,6 +91,8 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
       let author = '未知作者';
       let cover = `https://picsum.photos/seed/${Date.now()}/300/400`;
 
+      let originalEpubBuffer: ArrayBuffer | undefined;
+
       if (file.name.endsWith('.txt')) {
         content = await new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -128,6 +130,7 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
           reader.onerror = reject;
           reader.readAsArrayBuffer(file);
         });
+        originalEpubBuffer = arrayBuffer;
         const book = ePub(arrayBuffer);
         await book.ready;
         
@@ -145,21 +148,43 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
         for (const item of (spine as any).spineItems) {
           try {
             const doc = await item.load(book.load.bind(book));
-            const elements = doc.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, div');
+            
+            // Better text extraction: walk the DOM and extract block-level text
             let chapterText = '';
-            if (elements.length > 0) {
-              elements.forEach((el: any) => {
-                const text = el.textContent?.trim();
-                if (text && el.children.length === 0) { // Only grab text from leaf nodes or elements with text
-                  chapterText += text + '\n\n';
-                } else if (text && el.tagName.toLowerCase() === 'p') {
-                  chapterText += text + '\n\n';
+            const walkDOM = (node: Node) => {
+              if (node.nodeType === Node.TEXT_NODE) {
+                const text = node.textContent?.trim();
+                if (text) {
+                  chapterText += text;
                 }
-              });
-            } else {
-              chapterText = doc.textContent || '';
+              } else if (node.nodeType === Node.ELEMENT_NODE) {
+                const el = node as Element;
+                const tagName = el.tagName.toLowerCase();
+                const isBlock = ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote'].includes(tagName);
+                
+                if (isBlock && chapterText.length > 0 && !chapterText.endsWith('\n')) {
+                  chapterText += '\n';
+                }
+                
+                for (const child of Array.from(node.childNodes)) {
+                  walkDOM(child);
+                }
+                
+                if (isBlock) {
+                  chapterText += '\n\n';
+                }
+              }
+            };
+            
+            const body = doc.body || doc.querySelector('body') || doc;
+            walkDOM(body);
+            
+            // Clean up excessive newlines
+            chapterText = chapterText.replace(/\n{3,}/g, '\n\n').trim();
+            
+            if (chapterText) {
+              content += chapterText + '\n\n';
             }
-            content += chapterText + '\n\n';
           } catch (err) {
             console.warn("Failed to load epub item", err);
           }
@@ -176,7 +201,8 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
         author: author,
         cover: cover,
         progress: 0,
-        content: content.trim() || '无法提取文件内容。'
+        content: content.trim() || '无法提取文件内容。',
+        originalEpub: originalEpubBuffer
       };
       onImportBook(newBook);
     } catch (error) {

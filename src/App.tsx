@@ -133,6 +133,7 @@ export default function App() {
               onUpdateBook={handleUpdateBook}
               onImportBook={handleImportBook}
               onSaveJournal={(entry) => setJournalEntries(prev => [entry, ...prev])}
+              onUpdateJournal={(entry) => setJournalEntries(prev => prev.map(e => e.id === entry.id ? entry : e))}
               companionName={companionName}
               companionAvatar={companionAvatar}
               onShare={(text) => {

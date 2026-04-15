@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Heart, Calendar, Clock, BookOpen, ChevronRight, ChevronLeft, Save, Quote, Settings, Gift, Loader2, X } from 'lucide-react';
+import { Heart, Calendar, Clock, BookOpen, ChevronRight, ChevronLeft, Save, Quote, Settings, Gift, Loader2, X, PenTool } from 'lucide-react';
 import { JournalEntry, Book, Memo } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { updateApiConfig, sendMessage, fetchModels } from '../services/geminiService';
@@ -50,6 +50,8 @@ export default function Companion({
   const [isGifting, setIsGifting] = useState(false);
   const [editingJournalId, setEditingJournalId] = useState<string | null>(null);
   const [editJournalText, setEditJournalText] = useState('');
+  const [editingMemoId, setEditingMemoId] = useState<string | null>(null);
+  const [editingMemoContent, setEditingMemoContent] = useState('');
   const [journalToDelete, setJournalToDelete] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<'idle'|'testing'|'success'|'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
@@ -452,13 +454,35 @@ export default function Companion({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {apiPresets.map((preset, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => handleLoadPreset(preset)}
-                      className="px-3 py-1.5 text-xs font-serif rounded-lg border border-[#e5e0d8] bg-white hover:bg-[#f4ecd8] hover:text-[#8E2A2A] transition-colors"
-                    >
-                      {preset.name}
-                    </button>
+                    <div key={idx} className="flex items-center bg-white border border-[#e5e0d8] rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => handleLoadPreset(preset)}
+                        className="px-3 py-1.5 text-xs font-serif hover:bg-[#f4ecd8] hover:text-[#8E2A2A] transition-colors"
+                      >
+                        {preset.name}
+                      </button>
+                      <button
+                        onClick={() => {
+                          const newName = prompt("修改预设名称：", preset.name);
+                          if (newName) {
+                            setApiPresets(apiPresets.map((p, i) => i === idx ? { ...p, name: newName } : p));
+                          }
+                        }}
+                        className="px-2 py-1.5 text-gray-400 hover:text-[#8E2A2A] hover:bg-[#f4ecd8] transition-colors border-l border-[#e5e0d8]"
+                      >
+                        <PenTool size={12} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`确定要删除预设 "${preset.name}" 吗？`)) {
+                            setApiPresets(apiPresets.filter((_, i) => i !== idx));
+                          }
+                        }}
+                        className="px-2 py-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors border-l border-[#e5e0d8]"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
                   ))}
                 </div>
               </section>
@@ -861,15 +885,53 @@ export default function Companion({
                   <div key={memo.id} className="bg-white rounded-2xl p-4 shadow-sm border border-[#e5e0d8]">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-serif text-gray-400">{new Date(memo.timestamp).toLocaleString()}</span>
-                      <button 
-                        onClick={() => setMemos(memos.filter(m => m.id !== memo.id))}
-                        className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-                      >
-                        <X size={14} />
-                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => {
+                            setEditingMemoId(memo.id);
+                            setEditingMemoContent(memo.content);
+                          }}
+                          className="p-1 text-gray-400 hover:text-[#8E2A2A] transition-colors"
+                        >
+                          <PenTool size={14} />
+                        </button>
+                        <button 
+                          onClick={() => setMemos(memos.filter(m => m.id !== memo.id))}
+                          className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-sm text-[#2c2826] font-serif whitespace-pre-wrap mb-3">{memo.content}</p>
-                    {memo.aiComment && (
+                    {editingMemoId === memo.id ? (
+                      <div className="mt-2">
+                        <textarea
+                          value={editingMemoContent}
+                          onChange={(e) => setEditingMemoContent(e.target.value)}
+                          className="w-full p-2 text-sm font-serif border border-[#e5e0d8] rounded-lg focus:outline-none focus:ring-1 focus:ring-[#8E2A2A] resize-none min-h-[60px]"
+                        />
+                        <div className="flex justify-end gap-2 mt-2">
+                          <button 
+                            onClick={() => setEditingMemoId(null)}
+                            className="px-3 py-1 text-xs font-serif text-gray-500 hover:bg-gray-100 rounded-md"
+                          >
+                            取消
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setMemos(memos.map(m => m.id === memo.id ? { ...m, content: editingMemoContent } : m));
+                              setEditingMemoId(null);
+                            }}
+                            className="px-3 py-1 text-xs font-serif bg-[#8E2A2A] text-white rounded-md"
+                          >
+                            保存
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-[#2c2826] font-serif whitespace-pre-wrap mb-3">{memo.content}</p>
+                    )}
+                    {memo.aiComment && !editingMemoId && (
                       <div className="bg-[#f4ecd8]/50 rounded-xl p-3 border border-[#eaddc5]">
                         <div className="flex items-center gap-2 mb-1">
                           <div className="w-5 h-5 rounded-full bg-[#8E2A2A]/10 flex items-center justify-center text-[#8E2A2A]">

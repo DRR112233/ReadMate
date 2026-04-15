@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2732 2732">
+  <rect width="2732" height="2732" fill="#f4ecd8"/>
+  <g transform="translate(1366, 1100)">
+    <path d="M0 -150c-120-120-315-85-315 105 0 150 315 350 315 350s315-200 315-350c0-190-195-225-315-105z" fill="#8E2A2A"/>
+    <path d="M-212 200 L0 350 L212 200" stroke="#8E2A2A" stroke-width="40" fill="none" stroke-linecap="round"/>
+  </g>
+  <text x="1366" y="1600" font-family="serif" font-size="120" font-weight="bold" fill="#2c2826" text-anchor="middle">ReadMate</text>
+  <text x="1366" y="1750" font-family="serif" font-size="60" fill="#8E2A2A" text-anchor="middle" letter-spacing="10">跨越次元的共鸣</text>
+</svg>
