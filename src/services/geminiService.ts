@@ -35,13 +35,12 @@ export const initChat = (storyContext: string, persona: string) => {
 
   if (currentConfig.baseUrl.includes('googleapis.com')) {
     if (!ai) ai = new GoogleGenAI({ apiKey: currentConfig.apiKey });
-    const model = ai.getGenerativeModel({
+    chatInstance = ai.chats.create({
       model: currentConfig.model || "gemini-1.5-flash",
       config: {
         systemInstruction: systemPrompt,
       }
     });
-    chatInstance = model.startChat();
   } else {
     // For third-party APIs, we'll use a simple message history array
     chatInstance = {
@@ -74,7 +73,7 @@ export const initChat = (storyContext: string, persona: string) => {
         const text = data.choices[0].message.content;
         chatInstance.history.push({ role: 'user', content: message });
         chatInstance.history.push({ role: 'assistant', content: text });
-        return { response: { text: () => text } };
+        return { text };
       }
     };
   }
@@ -151,10 +150,10 @@ export const sendMessage = async (message: string) => {
   }
   
   try {
-    const result = await chatInstance.sendMessage(message);
-    // Standardize response format: Google SDK returns result.response.text(), 
-    // our mock third-party chatInstance returns result.response.text() as well now
-    return typeof result.response.text === 'function' ? result.response.text() : result.response.text;
+    const result = await chatInstance.sendMessage(
+      currentConfig.baseUrl.includes('googleapis.com') ? { message } : message
+    );
+    return result.text;
   } catch (error) {
     console.error("SendMessage failed:", error);
     throw error;
