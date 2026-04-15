@@ -56,6 +56,10 @@ export const initChat = (storyContext: string, persona: string) => {
           cleanBaseUrl += '/chat/completions';
         }
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
+      try {
         const response = await fetch(cleanBaseUrl, {
           method: 'POST',
           headers: {
@@ -65,8 +69,11 @@ export const initChat = (storyContext: string, persona: string) => {
           body: JSON.stringify({
             model: currentConfig.model || 'gpt-3.5-turbo',
             messages: [...chatInstance.history, { role: 'user', content: message }]
-          })
+          }),
+          signal: controller.signal
         });
+
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
@@ -78,6 +85,12 @@ export const initChat = (storyContext: string, persona: string) => {
         chatInstance.history.push({ role: 'user', content: message });
         chatInstance.history.push({ role: 'assistant', content: text });
         return { text };
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          throw new Error('请求超时，请检查网络或 API 地址。');
+        }
+        throw err;
+      }
       }
     };
   }
@@ -133,23 +146,37 @@ export const sendMessage = async (message: string) => {
       if (!cleanBaseUrl.endsWith('/chat/completions')) {
         cleanBaseUrl += '/chat/completions';
       }
-      const response = await fetch(cleanBaseUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentConfig.apiKey}`
-        },
-        body: JSON.stringify({
-          model: currentConfig.model || 'gpt-3.5-turbo',
-          messages: [{ role: 'user', content: message }]
-        })
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `API Error: ${response.status}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+      try {
+        const response = await fetch(cleanBaseUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentConfig.apiKey}`
+          },
+          body: JSON.stringify({
+            model: currentConfig.model || 'gpt-3.5-turbo',
+            messages: [{ role: 'user', content: message }]
+          }),
+          signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error?.message || `API Error: ${response.status}`);
+        }
+        const data = await response.json();
+        return data.choices[0].message.content;
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          throw new Error('请求超时，请检查网络或 API 地址。');
+        }
+        throw err;
       }
-      const data = await response.json();
-      return data.choices[0].message.content;
     }
   }
   

@@ -44,10 +44,12 @@ export default function ReadingArea({
   const [showSettings, setShowSettings] = useState(false);
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [activeQuote, setActiveQuote] = useState('');
+  const [activeParagraphIdx, setActiveParagraphIdx] = useState<number | null>(null);
   const [noteText, setNoteText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showBookmarkToast, setShowBookmarkToast] = useState(false);
   const [showTaNote, setShowTaNote] = useState(book.isTaRecommendation && !book.hasSeenNote);
+  const [expandedParagraph, setExpandedParagraph] = useState<string | null>(null);
   const [replyingToNoteId, setReplyingToNoteId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [isReplying, setIsReplying] = useState(false);
@@ -281,6 +283,13 @@ export default function ReadingArea({
         const text = selection.toString().trim();
         setSelectedText(text);
         
+        // Find paragraph index
+        const anchorElement = selection.anchorNode?.parentElement;
+        const paragraphEl = anchorElement?.closest('[data-paragraph-idx]');
+        if (paragraphEl) {
+          setActiveParagraphIdx(parseInt(paragraphEl.getAttribute('data-paragraph-idx') || '0', 10));
+        }
+
         try {
           const range = selection.getRangeAt(0);
           const rect = range.getBoundingClientRect();
@@ -295,6 +304,7 @@ export default function ReadingArea({
         }
       } else {
         setSelectedText('');
+        setActiveParagraphIdx(null);
         setSelectionPos(null);
       }
     }, 100); // Small delay for mobile selection to settle
@@ -322,7 +332,8 @@ export default function ReadingArea({
       aiResponse: '...', // Placeholder until AI replies
       date: Date.now(),
       bookTitle: book.title,
-      chatHistory: [userMsg]
+      chatHistory: [userMsg],
+      paragraphIdx: activeParagraphIdx ?? undefined
     });
     
     // Trigger AI response to the user's note
@@ -340,7 +351,8 @@ export default function ReadingArea({
             aiResponse: response,
             date: Date.now(),
             bookTitle: book.title,
-            chatHistory: [userMsg, aiMsg]
+            chatHistory: [userMsg, aiMsg],
+            paragraphIdx: activeParagraphIdx ?? undefined
           });
         }
       } catch (error) {
@@ -353,7 +365,8 @@ export default function ReadingArea({
             aiResponse: '（TA 暂时走神了，没有回复）',
             date: Date.now(),
             bookTitle: book.title,
-            chatHistory: [userMsg]
+            chatHistory: [userMsg],
+            paragraphIdx: activeParagraphIdx ?? undefined
           });
         }
       }
@@ -394,7 +407,8 @@ export default function ReadingArea({
         aiResponse: res,
         date: Date.now(),
         bookTitle: book.title,
-        chatHistory: [userMsg, aiMsg]
+        chatHistory: [userMsg, aiMsg],
+        paragraphIdx: activeParagraphIdx ?? undefined
       });
     } catch (e) {
       console.error(e);
@@ -516,16 +530,23 @@ export default function ReadingArea({
               paragraphs.map((paragraph, idx) => {
                 // Find chat-based annotations
                 const chatNotes = journalEntries.filter(entry => 
-                  entry.bookTitle === book.title && (paragraph.includes(entry.quote) || entry.quote.includes(paragraph))
+                  entry.bookTitle === book.title && 
+                  (entry.paragraphIdx === idx || (!entry.paragraphIdx && (paragraph.includes(entry.quote) || entry.quote.includes(paragraph))))
                 );
 
                 // Find manual annotations
                 const manualNotes = (book.annotations || []).filter(ann => 
-                  paragraph.includes(ann.text) || ann.text.includes(paragraph)
+                  ann.paragraphIdx === idx || (!ann.paragraphIdx && (paragraph.includes(ann.text) || ann.text.includes(paragraph)))
                 );
 
                 const allNotes = [
-                  ...chatNotes.map(n => ({ id: n.id, text: n.quote, comment: n.aiResponse, sender: 'ai' as const, chatHistory: n.chatHistory })),
+                  ...chatNotes.map(n => ({ 
+                    id: n.id, 
+                    text: n.quote, 
+                    comment: n.aiResponse, 
+                    sender: n.userNote ? 'user' as const : 'ai' as const,
+                    chatHistory: n.chatHistory 
+                  })),
                   ...manualNotes.map(n => ({ id: n.id, text: n.text, comment: n.comment, sender: n.sender, chatHistory: undefined }))
                 ];
 
@@ -582,9 +603,9 @@ export default function ReadingArea({
                                               {note.sender === 'user' ? '我的批注' : 'TA 的留言'}
                                             </span>
                                           </div>
-                                          <div className={`pl-8 ${note.sender === 'user' ? 'font-hand text-2xl text-[#8E2A2A] tracking-wide transform -rotate-1' : 'font-serif text-sm text-[#2c2826]'} leading-relaxed`}>
+                                          <div className={`pl-8 ${note.sender === 'user' && (!note.chatHistory || note.chatHistory.length === 0) ? 'font-hand text-2xl text-[#8E2A2A] tracking-wide transform -rotate-1' : 'font-serif text-sm text-[#2c2826]'} leading-relaxed`}>
                                             {note.chatHistory && note.chatHistory.length > 0 ? (
-                                              <div className="space-y-3 font-serif text-sm transform-none">
+                                              <div className="space-y-3 font-serif text-sm">
                                                 {note.chatHistory.map((msg, i) => (
                                                   <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
                                                     <span className="text-[10px] text-gray-400 mb-1">{msg.sender === 'user' ? '我' : 'TA'}</span>
@@ -664,7 +685,7 @@ export default function ReadingArea({
                 }
 
                 return (
-                  <div key={idx} className="reading-paragraph relative group" style={{ marginBottom: `${paragraphSpacing}px` }}>
+                  <div key={idx} data-paragraph-idx={idx} className="reading-paragraph relative group" style={{ marginBottom: `${paragraphSpacing}px` }}>
                     <div className="relative z-10 leading-relaxed">
                       {renderedParts.map((part, i) => <React.Fragment key={i}>{part}</React.Fragment>)}
                     </div>

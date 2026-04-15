@@ -13,6 +13,7 @@ export interface JournalEntry {
   date: number;
   bookTitle: string;
   chatHistory?: Message[];
+  paragraphIdx?: number;
 }
 
 export interface ApiConfig {
