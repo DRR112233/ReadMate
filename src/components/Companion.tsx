@@ -22,6 +22,8 @@ interface CompanionProps {
   startDate: number;
   readingTime: number;
   books: Book[];
+  onCreateBackup: () => any;
+  onRestoreBackup: (payload: any) => void;
 }
 
 type View = 'main' | 'persona' | 'journal' | 'api-settings' | 'gifts' | 'profile' | 'memos';
@@ -41,7 +43,9 @@ export default function Companion({
   setCompanionAvatar,
   startDate,
   readingTime,
-  books
+  books,
+  onCreateBackup,
+  onRestoreBackup
 }: CompanionProps) {
   const [view, setView] = useState<View>('main');
   const [tempPersona, setTempPersona] = useState(persona);
@@ -65,6 +69,7 @@ export default function Companion({
   useEffect(() => {
     localStorage.setItem('app_memoAiFrequency', memoAiFrequency.toString());
   }, [memoAiFrequency]);
+  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
 
   const daysTogether = Math.max(1, Math.ceil((Date.now() - startDate) / (1000 * 60 * 60 * 24)));
   const finishedBooks = books.filter(b => b.progress === 100 || b.status === 'finished').length;
@@ -275,6 +280,43 @@ export default function Companion({
     setView('main');
   };
 
+  const handleExportBackup = () => {
+    try {
+      const payload = onCreateBackup();
+      const backupString = JSON.stringify(payload, null, 2);
+      const blob = new Blob([backupString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const date = new Date().toISOString().replace(/[:.]/g, '-');
+      a.href = url;
+      a.download = `readmate-backup-${date}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert('备份文件已下载，请妥善保存。');
+    } catch (error) {
+      console.error('Backup export failed:', error);
+      alert('备份失败，请稍后重试。');
+    }
+  };
+
+  const handleImportBackup = async (file: File | null) => {
+    if (!file) return;
+    setIsRestoringBackup(true);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      onRestoreBackup(parsed);
+      alert('恢复成功，建议重新进入对应页面查看最新数据。');
+    } catch (error) {
+      console.error('Backup restore failed:', error);
+      alert('恢复失败：文件格式不正确或已损坏。');
+    } finally {
+      setIsRestoringBackup(false);
+    }
+  };
+
   return (
     <div className="h-full w-full bg-paper flex flex-col overflow-hidden relative">
       <AnimatePresence mode="wait">
@@ -432,6 +474,35 @@ export default function Companion({
                 </div>
                 <ChevronRight size={18} className="text-gray-300" />
               </button>
+
+              <div className="p-4 bg-white rounded-2xl border border-[#e5e0d8] shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-serif font-medium text-[#2c2826]">数据备份</span>
+                  <span className="text-[10px] text-gray-400 font-serif">本地 JSON</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={handleExportBackup}
+                    className="py-2.5 rounded-xl bg-[#8E2A2A] text-white text-xs font-serif font-bold hover:bg-[#6b1f1f] transition-colors"
+                  >
+                    一键备份
+                  </button>
+                  <label className={`py-2.5 rounded-xl text-center text-xs font-serif font-bold border transition-colors cursor-pointer ${isRestoringBackup ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-[#f4ecd8] text-[#8E2A2A] border-[#eaddc5] hover:bg-[#eaddc5]'}`}>
+                    恢复备份
+                    <input
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      disabled={isRestoringBackup}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        handleImportBackup(file);
+                        e.currentTarget.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
           </motion.div>
         )}

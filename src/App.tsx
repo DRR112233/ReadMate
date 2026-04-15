@@ -8,6 +8,22 @@ import { Library, BookOpen, Heart } from 'lucide-react';
 
 type Tab = 'bookshelf' | 'reading' | 'companion';
 
+interface BackupPayload {
+  version: number;
+  exportedAt: number;
+  app: {
+    books: Book[];
+    journals: JournalEntry[];
+    memos: Memo[];
+    persona: string;
+    companionName: string;
+    companionAvatar: string;
+    startDate: number;
+    readingTime: number;
+  };
+  localStorageSnapshot: Record<string, string | null>;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('bookshelf');
   const [books, setBooks] = useState<Book[]>(() => {
@@ -39,6 +55,16 @@ export default function App() {
     return parseInt(date, 10);
   });
   const [readingTime, setReadingTime] = useState(() => parseInt(localStorage.getItem('app_readingTime') || '0', 10));
+
+  const backupLocalStorageKeys = [
+    'app_apiConfig',
+    'app_apiPresets',
+    'reading_fontSize',
+    'reading_lineHeight',
+    'reading_paragraphSpacing',
+    'reading_aiFrequency',
+    'reading_theme',
+  ];
 
   useEffect(() => {
     let interval: any;
@@ -109,6 +135,65 @@ export default function App() {
     setBooks(prev => [{ ...newBook, isTaRecommendation: true }, ...prev]);
   };
 
+  const handleCreateBackup = (): BackupPayload => {
+    const localStorageSnapshot: Record<string, string | null> = {};
+    backupLocalStorageKeys.forEach((key) => {
+      localStorageSnapshot[key] = localStorage.getItem(key);
+    });
+
+    return {
+      version: 1,
+      exportedAt: Date.now(),
+      app: {
+        books,
+        journals: journalEntries,
+        memos,
+        persona,
+        companionName,
+        companionAvatar,
+        startDate,
+        readingTime,
+      },
+      localStorageSnapshot,
+    };
+  };
+
+  const handleRestoreBackup = (payload: BackupPayload) => {
+    if (!payload || payload.version !== 1 || !payload.app) {
+      throw new Error('备份文件格式不正确');
+    }
+
+    const restoredBooks = Array.isArray(payload.app.books) ? payload.app.books : [];
+    const restoredJournals = Array.isArray(payload.app.journals) ? payload.app.journals : [];
+    const restoredMemos = Array.isArray(payload.app.memos) ? payload.app.memos : [];
+
+    setBooks(restoredBooks);
+    setJournalEntries(restoredJournals);
+    setMemos(restoredMemos);
+    setPersona(payload.app.persona || DEFAULT_PERSONA);
+    setCompanionName(payload.app.companionName || '你的恋人');
+    setCompanionAvatar(payload.app.companionAvatar || '');
+    setReadingTime(Number.isFinite(payload.app.readingTime) ? payload.app.readingTime : 0);
+
+    localStorage.setItem('app_books', JSON.stringify(restoredBooks));
+    localStorage.setItem('app_journals', JSON.stringify(restoredJournals));
+    localStorage.setItem('app_memos', JSON.stringify(restoredMemos));
+    localStorage.setItem('app_persona', payload.app.persona || DEFAULT_PERSONA);
+    localStorage.setItem('app_companionName', payload.app.companionName || '你的恋人');
+    localStorage.setItem('app_companionAvatar', payload.app.companionAvatar || '');
+    localStorage.setItem('app_readingTime', String(Number.isFinite(payload.app.readingTime) ? payload.app.readingTime : 0));
+    localStorage.setItem('app_startDate', String(Number.isFinite(payload.app.startDate) ? payload.app.startDate : Date.now()));
+
+    if (payload.localStorageSnapshot && typeof payload.localStorageSnapshot === 'object') {
+      backupLocalStorageKeys.forEach((key) => {
+        const value = payload.localStorageSnapshot[key];
+        if (typeof value === 'string') {
+          localStorage.setItem(key, value);
+        }
+      });
+    }
+  };
+
   return (
     <div className="h-screen w-full bg-[#f3f4f6] flex justify-center items-center font-sans overflow-hidden">
       {/* Mobile Frame Container */}
@@ -175,6 +260,8 @@ export default function App() {
               startDate={startDate}
               readingTime={readingTime}
               books={books}
+              onCreateBackup={handleCreateBackup}
+              onRestoreBackup={handleRestoreBackup}
             />
           )}
         </main>
