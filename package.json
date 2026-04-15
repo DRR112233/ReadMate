@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit",
     "static-build": "vite build",
     "android-sync": "npx cap sync",
-    "android-open": "npx cap open android"
+    "android-open": "npx cap open android",
+    "build:all": "npm install && npm run static-build && npm run android-sync"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",
