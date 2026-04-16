@@ -59,6 +59,7 @@ export default function App() {
   const backupLocalStorageKeys = [
     'app_apiConfig',
     'app_apiPresets',
+    'app_memoAiFrequency',
     'reading_fontSize',
     'reading_lineHeight',
     'reading_paragraphSpacing',

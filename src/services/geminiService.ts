@@ -130,9 +130,17 @@ export const fetchModels = async () => {
   }
 };
 
-export const sendMessage = async (message: string) => {
+interface SendMessageOptions {
+  timeoutMs?: number;
+  bypassChat?: boolean;
+}
+
+export const sendMessage = async (message: string, options: SendMessageOptions = {}) => {
+  const timeoutMs = options.timeoutMs ?? 60000;
+  const bypassChat = options.bypassChat ?? false;
+
   // If chat isn't initialized, we do a one-off call
-  if (!chatInstance) {
+  if (!chatInstance || bypassChat) {
     if (currentConfig.baseUrl.includes('googleapis.com')) {
       if (!ai) ai = new GoogleGenAI({ apiKey: currentConfig.apiKey });
       const result = await ai.models.generateContent({
@@ -147,7 +155,7 @@ export const sendMessage = async (message: string) => {
         cleanBaseUrl += '/chat/completions';
       }
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const response = await fetch(cleanBaseUrl, {

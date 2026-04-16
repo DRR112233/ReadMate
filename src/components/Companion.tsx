@@ -5,6 +5,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { updateApiConfig, sendMessage, fetchModels } from '../services/geminiService';
 import Markdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
 interface CompanionProps {
   persona: string;
@@ -56,6 +59,10 @@ export default function Companion({
   const [editJournalText, setEditJournalText] = useState('');
   const [editingMemoId, setEditingMemoId] = useState<string | null>(null);
   const [editingMemoContent, setEditingMemoContent] = useState('');
+  const [editingUserNoteId, setEditingUserNoteId] = useState<string | null>(null);
+  const [editUserNoteText, setEditUserNoteText] = useState('');
+  const [editingMessageKey, setEditingMessageKey] = useState<string | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState('');
   const [journalToDelete, setJournalToDelete] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<'idle'|'testing'|'success'|'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
@@ -93,6 +100,47 @@ export default function Companion({
     setEditingJournalId(null);
   };
 
+  const startEditUserNote = (entry: JournalEntry) => {
+    setEditingUserNoteId(entry.id);
+    setEditUserNoteText(entry.userNote || '');
+  };
+
+  const saveEditUserNote = (entry: JournalEntry) => {
+    onUpdateJournal({
+      ...entry,
+      userNote: editUserNoteText
+    });
+    setEditingUserNoteId(null);
+  };
+
+  const deleteUserNote = (entry: JournalEntry) => {
+    onUpdateJournal({
+      ...entry,
+      userNote: ''
+    });
+  };
+
+  const startEditMessage = (entry: JournalEntry, index: number) => {
+    const msg = entry.chatHistory?.[index];
+    if (!msg) return;
+    setEditingMessageKey(`${entry.id}:${index}`);
+    setEditingMessageText(msg.text);
+  };
+
+  const saveEditMessage = (entry: JournalEntry, index: number) => {
+    const history = [...(entry.chatHistory || [])];
+    if (!history[index]) return;
+    history[index] = { ...history[index], text: editingMessageText };
+    onUpdateJournal({ ...entry, chatHistory: history });
+    setEditingMessageKey(null);
+  };
+
+  const deleteMessage = (entry: JournalEntry, index: number) => {
+    const history = [...(entry.chatHistory || [])];
+    history.splice(index, 1);
+    onUpdateJournal({ ...entry, chatHistory: history });
+  };
+
   const confirmDeleteJournal = () => {
     if (journalToDelete) {
       onDeleteJournal(journalToDelete);
@@ -111,7 +159,7 @@ export default function Companion({
 4. 第三行写上一句给我的留言，格式为：留言：xxx
 5. 之后是正文内容。`;
       
-      const response = await sendMessage(prompt);
+      const response = await sendMessage(prompt, { timeoutMs: 120000, bypassChat: true });
       
       let title = '专属睡前故事';
       let author = 'TA 的心意';
@@ -284,12 +332,39 @@ export default function Companion({
     try {
       const payload = onCreateBackup();
       const backupString = JSON.stringify(payload, null, 2);
+      const date = new Date().toISOString().replace(/[:.]/g, '-');
+      const fileName = `readmate-backup-${date}.json`;
+
+      if (Capacitor.isNativePlatform()) {
+        Filesystem.writeFile({
+          path: `ReadMate/${fileName}`,
+          data: backupString,
+          directory: Directory.Documents,
+          recursive: true,
+        }).then(async (file) => {
+          try {
+            await Share.share({
+              title: 'ReadMate 备份文件',
+              text: '请保存这个备份文件，便于恢复数据。',
+              url: file.uri,
+              dialogTitle: '导出备份文件',
+            });
+            alert('备份文件已生成，请在弹出的系统分享面板中保存。');
+          } catch {
+            alert('备份文件已保存到手机文档目录：Documents/ReadMate');
+          }
+        }).catch((err) => {
+          console.error('Native backup write failed:', err);
+          alert('备份失败：无法写入手机文件。');
+        });
+        return;
+      }
+
       const blob = new Blob([backupString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      const date = new Date().toISOString().replace(/[:.]/g, '-');
       a.href = url;
-      a.download = `readmate-backup-${date}.json`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -884,19 +959,61 @@ export default function Companion({
                       ) : entry.chatHistory && entry.chatHistory.length > 0 ? (
                         <div className="flex-1 space-y-3">
                           {entry.chatHistory.map((msg, i) => (
-                            <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
-                              <span className="text-[10px] text-gray-400 mb-1">{msg.sender === 'user' ? '我' : 'TA'}</span>
-                              <div className={`px-3 py-2 rounded-xl text-sm ${msg.sender === 'user' ? 'bg-[#8E2A2A] text-white' : 'bg-gray-100 text-[#2c2826]'}`}>
-                                {msg.text}
+                            <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'} gap-1`}>
+                              <span className="text-[10px] text-gray-400">{msg.sender === 'user' ? '我' : 'TA'}</span>
+                              <div className={`px-3 py-2 rounded-xl text-sm w-full ${msg.sender === 'user' ? 'bg-[#8E2A2A] text-white' : 'bg-gray-100 text-[#2c2826]'}`}>
+                                {editingMessageKey === `${entry.id}:${i}` ? (
+                                  <div className="space-y-2">
+                                    <textarea
+                                      value={editingMessageText}
+                                      onChange={(e) => setEditingMessageText(e.target.value)}
+                                      className="w-full p-2 rounded-lg text-sm text-[#2c2826] border border-[#e5e0d8]"
+                                    />
+                                    <div className="flex justify-end gap-2">
+                                      <button onClick={() => setEditingMessageKey(null)} className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-700">取消</button>
+                                      <button onClick={() => saveEditMessage(entry, i)} className="text-xs px-2 py-1 rounded bg-[#8E2A2A] text-white">保存</button>
+                                    </div>
+                                  </div>
+                                ) : msg.text}
+                              </div>
+                              <div className="flex gap-2 text-[10px] text-gray-400">
+                                <button onClick={() => startEditMessage(entry, i)} className="hover:text-[#8E2A2A]">编辑</button>
+                                <button onClick={() => deleteMessage(entry, i)} className="hover:text-red-500">删除</button>
                               </div>
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <div 
-                          className="text-sm text-[#2c2826] leading-relaxed font-serif prose prose-sm prose-p:my-1 prose-a:text-[#8E2A2A]"
-                          dangerouslySetInnerHTML={{ __html: entry.aiResponse }}
-                        />
+                        <div className="flex-1 space-y-3">
+                          {!!entry.userNote && (
+                            <div className="bg-rose-50 border border-rose-100 rounded-xl p-3">
+                              <div className="text-[10px] text-gray-400 mb-1">我的批注</div>
+                              {editingUserNoteId === entry.id ? (
+                                <div className="space-y-2">
+                                  <textarea
+                                    value={editUserNoteText}
+                                    onChange={(e) => setEditUserNoteText(e.target.value)}
+                                    className="w-full p-2 rounded-lg text-sm border border-[#e5e0d8]"
+                                  />
+                                  <div className="flex justify-end gap-2">
+                                    <button onClick={() => setEditingUserNoteId(null)} className="text-xs px-2 py-1 rounded bg-gray-200">取消</button>
+                                    <button onClick={() => saveEditUserNote(entry)} className="text-xs px-2 py-1 rounded bg-[#8E2A2A] text-white">保存</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-sm whitespace-pre-wrap">{entry.userNote}</p>
+                              )}
+                              <div className="flex gap-2 text-[10px] text-gray-400 mt-1">
+                                <button onClick={() => startEditUserNote(entry)} className="hover:text-[#8E2A2A]">编辑</button>
+                                <button onClick={() => deleteUserNote(entry)} className="hover:text-red-500">删除</button>
+                              </div>
+                            </div>
+                          )}
+                          <div 
+                            className="text-sm text-[#2c2826] leading-relaxed font-serif prose prose-sm prose-p:my-1 prose-a:text-[#8E2A2A]"
+                            dangerouslySetInnerHTML={{ __html: entry.aiResponse }}
+                          />
+                        </div>
                       )}
                     </div>
                   </div>

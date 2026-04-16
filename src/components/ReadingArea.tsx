@@ -208,7 +208,6 @@ export default function ReadingArea({
         const progress = scrollHeight > clientHeight 
           ? Math.round((currentPos / (scrollHeight - clientHeight)) * 100) 
           : 100;
-          
         onUpdateBook({
           ...book,
           lastReadPosition: currentPos,
@@ -399,17 +398,7 @@ export default function ReadingArea({
       const aiMsg: Message = { id: (Date.now() + 1).toString(), sender: 'ai', text: res, timestamp: Date.now() };
       setMessages(prev => [...prev, aiMsg]);
       
-      const newJournalId = Date.now().toString();
-      setActiveJournalId(newJournalId);
-      onSaveJournal({
-        id: newJournalId,
-        quote: quote,
-        aiResponse: res,
-        date: Date.now(),
-        bookTitle: book.title,
-        chatHistory: [userMsg, aiMsg],
-        paragraphIdx: activeParagraphIdx ?? undefined
-      });
+      // “分享给 TA”仅用于阅读聊天，不写入情绪手账
     } catch (e) {
       console.error(e);
     }
@@ -531,12 +520,12 @@ export default function ReadingArea({
                 // Find chat-based annotations
                 const chatNotes = journalEntries.filter(entry => 
                   entry.bookTitle === book.title && 
-                  (entry.paragraphIdx === idx || (!entry.paragraphIdx && (paragraph.includes(entry.quote) || entry.quote.includes(paragraph))))
+                  (entry.paragraphIdx === idx || (entry.paragraphIdx === undefined && (paragraph.includes(entry.quote) || entry.quote.includes(paragraph))))
                 );
 
                 // Find manual annotations
                 const manualNotes = (book.annotations || []).filter(ann => 
-                  ann.paragraphIdx === idx || (!ann.paragraphIdx && (paragraph.includes(ann.text) || ann.text.includes(paragraph)))
+                  ann.paragraphIdx === idx || (ann.paragraphIdx === undefined && (paragraph.includes(ann.text) || ann.text.includes(paragraph)))
                 );
 
                 const allNotes = [
@@ -559,123 +548,126 @@ export default function ReadingArea({
                       if (typeof part === 'string') {
                         // If the note text is longer than the paragraph, we just highlight the whole paragraph
                         const matchText = note.text.includes(paragraph) ? paragraph : note.text;
-                        const split = part.split(matchText);
-                        split.forEach((s, i) => {
-                          newParts.push(s);
-                          if (i < split.length - 1) {
-                            newParts.push(
-                              <React.Fragment key={`${note.id}-${i}`}>
-                                <span 
-                                  className="note-highlight relative cursor-pointer"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const selection = window.getSelection()?.toString();
-                                    if (!selection) {
-                                      setExpandedParagraph(expandedParagraph === note.id ? null : note.id);
-                                    }
-                                  }}
-                                >
-                                  {matchText}
-                                </span>
-                                {/* Inline Expandable Note */}
-                                <AnimatePresence>
-                                  {expandedParagraph === note.id && (
-                                    <motion.div 
-                                      initial={{ opacity: 0, height: 0 }}
-                                      animate={{ opacity: 1, height: 'auto' }}
-                                      exit={{ opacity: 0, height: 0 }}
-                                      className="block w-full overflow-hidden my-3"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <div className="p-4 bg-[#f4ecd8]/60 rounded-2xl border border-[#e5e0d8] shadow-inner">
-                                        <div className="flex flex-col gap-3">
-                                          <div className="flex items-center gap-2">
-                                            {note.sender === 'user' ? (
-                                              <div className="w-6 h-6 rounded-full bg-[#8E2A2A]/10 flex items-center justify-center text-[#8E2A2A]">
-                                                <PenTool size={12} />
-                                              </div>
-                                            ) : (
-                                              <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center text-[#8E2A2A] shadow-sm">
-                                                <Heart size={12} fill="currentColor" />
-                                              </div>
-                                            )}
-                                            <span className="text-xs font-serif font-bold text-gray-500">
-                                              {note.sender === 'user' ? '我的批注' : 'TA 的留言'}
-                                            </span>
-                                          </div>
-                                          <div className={`pl-8 ${note.sender === 'user' && (!note.chatHistory || note.chatHistory.length === 0) ? 'font-hand text-2xl text-[#8E2A2A] tracking-wide transform -rotate-1' : 'font-serif text-sm text-[#2c2826]'} leading-relaxed`}>
-                                            {note.chatHistory && note.chatHistory.length > 0 ? (
-                                              <div className="space-y-3 font-serif text-sm">
-                                                {note.chatHistory.map((msg, i) => (
-                                                  <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
-                                                    <span className="text-[10px] text-gray-400 mb-1">{msg.sender === 'user' ? '我' : 'TA'}</span>
-                                                    <div className={`px-3 py-2 rounded-xl text-sm ${msg.sender === 'user' ? 'bg-[#8E2A2A] text-white' : 'bg-white border border-[#e5e0d8] text-[#2c2826]'}`}>
-                                                      <Markdown>{msg.text}</Markdown>
-                                                    </div>
+                        const firstIdx = part.indexOf(matchText);
+                        if (firstIdx === -1) {
+                          newParts.push(part);
+                        } else {
+                          const before = part.slice(0, firstIdx);
+                          const after = part.slice(firstIdx + matchText.length);
+                          newParts.push(before);
+                          newParts.push(
+                            <React.Fragment key={`${note.id}-first`}>
+                              <span 
+                                className="note-highlight relative cursor-pointer"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const selection = window.getSelection()?.toString();
+                                  if (!selection) {
+                                    setExpandedParagraph(expandedParagraph === note.id ? null : note.id);
+                                  }
+                                }}
+                              >
+                                {matchText}
+                              </span>
+                              {/* Inline Expandable Note */}
+                              <AnimatePresence>
+                                {expandedParagraph === note.id && (
+                                  <motion.div 
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    className="block w-full overflow-hidden my-3"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="p-4 bg-[#f4ecd8]/60 rounded-2xl border border-[#e5e0d8] shadow-inner">
+                                      <div className="flex flex-col gap-3">
+                                        <div className="flex items-center gap-2">
+                                          {note.sender === 'user' ? (
+                                            <div className="w-6 h-6 rounded-full bg-[#8E2A2A]/10 flex items-center justify-center text-[#8E2A2A]">
+                                              <PenTool size={12} />
+                                            </div>
+                                          ) : (
+                                            <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center text-[#8E2A2A] shadow-sm">
+                                              <Heart size={12} fill="currentColor" />
+                                            </div>
+                                          )}
+                                          <span className="text-xs font-serif font-bold text-gray-500">
+                                            {note.sender === 'user' ? '我的批注' : 'TA 的留言'}
+                                          </span>
+                                        </div>
+                                        <div className={`pl-8 ${note.sender === 'user' && (!note.chatHistory || note.chatHistory.length === 0) ? 'font-hand text-2xl text-[#8E2A2A] tracking-wide transform -rotate-1' : 'font-serif text-sm text-[#2c2826]'} leading-relaxed`}>
+                                          {note.chatHistory && note.chatHistory.length > 0 ? (
+                                            <div className="space-y-3 font-serif text-sm">
+                                              {note.chatHistory.map((msg, i) => (
+                                                <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                                                  <span className="text-[10px] text-gray-400 mb-1">{msg.sender === 'user' ? '我' : 'TA'}</span>
+                                                  <div className={`px-3 py-2 rounded-xl text-sm ${msg.sender === 'user' ? 'bg-[#8E2A2A] text-white' : 'bg-white border border-[#e5e0d8] text-[#2c2826]'}`}>
+                                                    <Markdown>{msg.text}</Markdown>
                                                   </div>
-                                                ))}
-                                              </div>
-                                            ) : note.sender === 'ai' ? (
-                                              <div 
-                                                className="prose prose-sm prose-p:my-1"
-                                                dangerouslySetInnerHTML={{ __html: note.comment }}
-                                              />
-                                            ) : (
-                                              note.comment
-                                            )}
-                                          </div>
-                                          <div className="pl-8 mt-2">
-                                            {replyingToNoteId === note.id ? (
-                                              <div className="flex flex-col gap-2 mt-2">
-                                                <textarea
-                                                  value={replyText}
-                                                  onChange={(e) => setReplyText(e.target.value)}
-                                                  placeholder="写下你的回复..."
-                                                  className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif resize-none"
-                                                  rows={2}
-                                                  autoFocus
-                                                />
-                                                <div className="flex justify-end gap-2">
-                                                  <button 
-                                                    onClick={() => {
-                                                      setReplyingToNoteId(null);
-                                                      setReplyText('');
-                                                    }}
-                                                    className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg font-serif"
-                                                  >
-                                                    取消
-                                                  </button>
-                                                  <button 
-                                                    onClick={() => handleInlineReply(note.id, note.text, note.chatHistory)}
-                                                    disabled={isReplying || !replyText.trim()}
-                                                    className="px-3 py-1.5 text-xs bg-[#8E2A2A] text-white rounded-lg font-serif disabled:opacity-50 flex items-center gap-1"
-                                                  >
-                                                    {isReplying ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                                                    发送
-                                                  </button>
                                                 </div>
+                                              ))}
+                                            </div>
+                                          ) : note.sender === 'ai' ? (
+                                            <div 
+                                              className="prose prose-sm prose-p:my-1"
+                                              dangerouslySetInnerHTML={{ __html: note.comment }}
+                                            />
+                                          ) : (
+                                            note.comment
+                                          )}
+                                        </div>
+                                        <div className="pl-8 mt-2">
+                                          {replyingToNoteId === note.id ? (
+                                            <div className="flex flex-col gap-2 mt-2">
+                                              <textarea
+                                                value={replyText}
+                                                onChange={(e) => setReplyText(e.target.value)}
+                                                placeholder="写下你的回复..."
+                                                className="w-full p-3 rounded-xl border border-[#e5e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#8E2A2A] text-sm font-serif resize-none"
+                                                rows={2}
+                                                autoFocus
+                                              />
+                                              <div className="flex justify-end gap-2">
+                                                <button 
+                                                  onClick={() => {
+                                                    setReplyingToNoteId(null);
+                                                    setReplyText('');
+                                                  }}
+                                                  className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg font-serif"
+                                                >
+                                                  取消
+                                                </button>
+                                                <button 
+                                                  onClick={() => handleInlineReply(note.id, note.text, note.chatHistory)}
+                                                  disabled={isReplying || !replyText.trim()}
+                                                  className="px-3 py-1.5 text-xs bg-[#8E2A2A] text-white rounded-lg font-serif disabled:opacity-50 flex items-center gap-1"
+                                                >
+                                                  {isReplying ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                                                  发送
+                                                </button>
                                               </div>
-                                            ) : (
-                                              <button 
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  setReplyingToNoteId(note.id);
-                                                }}
-                                                className="text-xs text-[#8E2A2A] hover:text-[#6b1f1f] font-serif flex items-center gap-1"
-                                              >
-                                                <MessageCircle size={12} /> 回复
-                                              </button>
-                                            )}
-                                          </div>
+                                            </div>
+                                          ) : (
+                                            <button 
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setReplyingToNoteId(note.id);
+                                              }}
+                                              className="text-xs text-[#8E2A2A] hover:text-[#6b1f1f] font-serif flex items-center gap-1"
+                                            >
+                                              <MessageCircle size={12} /> 回复
+                                            </button>
+                                          )}
                                         </div>
                                       </div>
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
-                              </React.Fragment>
-                            );
-                          }
-                        });
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </React.Fragment>
+                          );
+                          newParts.push(after);
+                        }
                       } else {
                         newParts.push(part);
                       }
