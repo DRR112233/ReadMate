@@ -53,6 +53,21 @@ export default function ReadingArea({
   const [replyingToNoteId, setReplyingToNoteId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [isReplying, setIsReplying] = useState(false);
+  const hasBookmark = book.lastReadPosition !== undefined && book.lastReadPosition > 0;
+  const lastScrollTopRef = useRef(0);
+  const formatBookmarkTime = (timestamp?: number) => {
+    if (!timestamp) return '';
+    try {
+      return new Date(timestamp).toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return '';
+    }
+  };
 
   const handleInlineReply = async (noteId: string, quote: string, existingHistory: Message[] = []) => {
     if (!replyText.trim() || !onUpdateJournal) return;
@@ -177,16 +192,24 @@ export default function ReadingArea({
 
   // Restore scroll position on mount
   useEffect(() => {
-    if (scrollRef.current && book.lastReadPosition) {
-      scrollRef.current.scrollTop = book.lastReadPosition;
-    }
-  }, [book.id]);
+    if (!scrollRef.current || !hasBookmark) return;
+    const target = book.lastReadPosition || 0;
+    // Wait for layout to settle before restoring to avoid missing position on remount.
+    const rafId = requestAnimationFrame(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = target;
+        lastScrollTopRef.current = target;
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [book.id, book.lastReadPosition, hasBookmark]);
 
   // Auto-save on unmount
   useEffect(() => {
     const handleScroll = () => {
       if (scrollRef.current) {
         const currentPos = scrollRef.current.scrollTop;
+        lastScrollTopRef.current = currentPos;
         const { scrollHeight, clientHeight } = scrollRef.current;
         const progress = scrollHeight > clientHeight 
           ? Math.round((currentPos / (scrollHeight - clientHeight)) * 100) 
@@ -203,7 +226,11 @@ export default function ReadingArea({
     return () => {
       if (scrollEl) {
         scrollEl.removeEventListener('scroll', handleScroll);
-        const currentPos = scrollEl.scrollTop;
+        const currentPos = Math.max(lastScrollTopRef.current, scrollEl.scrollTop);
+        if (currentPos <= 0 && (book.lastReadPosition || 0) > 0) {
+          // Avoid overriding a valid bookmark with 0 during fast route transitions.
+          return;
+        }
         const { scrollHeight, clientHeight } = scrollEl;
         const progress = scrollHeight > clientHeight 
           ? Math.round((currentPos / (scrollHeight - clientHeight)) * 100) 
@@ -253,21 +280,82 @@ export default function ReadingArea({
     if (!scrollRef.current) return;
   };
 
+  const getCurrentParagraphIdx = () => {
+    if (!scrollRef.current) return 0;
+    const paragraphNodes = Array.from(scrollRef.current.querySelectorAll('[data-paragraph-idx]')) as HTMLElement[];
+    if (paragraphNodes.length === 0) return 0;
+    const scrollTop = scrollRef.current.scrollTop;
+    let currentIdx = 0;
+    for (const node of paragraphNodes) {
+      const idx = parseInt(node.dataset.paragraphIdx || '0', 10);
+      if (node.offsetTop <= scrollTop + 12) {
+        currentIdx = idx;
+      } else {
+        break;
+      }
+    }
+    return currentIdx;
+  };
+
+  const getChapterTitleByParagraphIdx = (paragraphIdx: number) => {
+    if (!chapters.length) return '未命名章节';
+    let currentChapter = chapters[0];
+    for (const chapter of chapters) {
+      if (chapter.index <= paragraphIdx) {
+        currentChapter = chapter;
+      } else {
+        break;
+      }
+    }
+    return currentChapter?.title || '未命名章节';
+  };
+
   const handleSaveBookmark = () => {
     if (!scrollRef.current) return;
     const currentPos = scrollRef.current.scrollTop;
+    lastScrollTopRef.current = currentPos;
     const { scrollHeight, clientHeight } = scrollRef.current;
     const progress = scrollHeight > clientHeight 
       ? Math.round((currentPos / (scrollHeight - clientHeight)) * 100) 
       : 100;
 
+    const currentParagraphIdx = getCurrentParagraphIdx();
+    const bookmarkChapter = getChapterTitleByParagraphIdx(currentParagraphIdx);
+
     onUpdateBook({
       ...book,
       lastReadPosition: currentPos,
-      progress: Math.min(100, progress)
+      progress: Math.min(100, progress),
+      bookmarkAt: Date.now(),
+      bookmarkChapter
     });
     setShowBookmarkToast(true);
     setTimeout(() => setShowBookmarkToast(false), 2000);
+  };
+
+  const persistReadingPosition = () => {
+    if (!scrollRef.current) return;
+    const currentPos = Math.max(lastScrollTopRef.current, scrollRef.current.scrollTop);
+    if (currentPos <= 0 && (book.lastReadPosition || 0) > 0) return;
+    const { scrollHeight, clientHeight } = scrollRef.current;
+    const progress = scrollHeight > clientHeight
+      ? Math.round((currentPos / (scrollHeight - clientHeight)) * 100)
+      : 100;
+    const currentParagraphIdx = getCurrentParagraphIdx();
+    const bookmarkChapter = getChapterTitleByParagraphIdx(currentParagraphIdx);
+    onUpdateBook({
+      ...book,
+      lastReadPosition: currentPos,
+      progress: Math.min(100, progress),
+      bookmarkAt: book.bookmarkAt || Date.now(),
+      bookmarkChapter: book.bookmarkChapter || bookmarkChapter
+    });
+  };
+
+  const handleBack = () => {
+    // Save once more before leaving reading page, avoids missing bookmark on fast transitions.
+    persistReadingPosition();
+    onBack();
   };
 
   const closeTaNote = () => {
@@ -417,7 +505,7 @@ export default function ReadingArea({
       {/* Top Bar */}
       <div className={`flex flex-col z-10 sticky top-0 transition-colors duration-300 ${theme === 'dark' ? 'bg-[#1a1a1a]/90' : theme === 'sepia' ? 'bg-[#f4ecd8]/90' : 'bg-[#fdfbf7]/90'} backdrop-blur-md border-b ${theme === 'dark' ? 'border-gray-800' : 'border-[#e5e0d8]'}`}>
         <div className="flex items-center justify-between px-4 py-3">
-          <button onClick={onBack} className="p-2 text-gray-500 hover:bg-gray-200/50 rounded-full transition-colors">
+          <button onClick={handleBack} className="p-2 text-gray-500 hover:bg-gray-200/50 rounded-full transition-colors">
             <ChevronLeft size={24} />
           </button>
           <span className="text-sm font-serif font-medium text-gray-400 tracking-widest truncate max-w-[150px]">{book.title}</span>
@@ -433,7 +521,7 @@ export default function ReadingArea({
               onClick={handleSaveBookmark}
               className="p-2 text-[#8E2A2A] hover:bg-gray-200/50 rounded-full transition-colors relative"
             >
-              <Bookmark size={20} fill={book.lastReadPosition ? "currentColor" : "none"} />
+              <Bookmark size={20} fill={hasBookmark ? "currentColor" : "none"} />
             </button>
             <button 
               onClick={() => setShowSettings(true)}
@@ -443,6 +531,14 @@ export default function ReadingArea({
             </button>
           </div>
         </div>
+        {hasBookmark && (
+          <div className="px-4 pb-2 text-[11px] font-serif text-[#8E2A2A]/80 flex items-center gap-2 truncate">
+            <Bookmark size={12} fill="currentColor" />
+            <span className="truncate">书签：{book.bookmarkChapter || '未命名章节'}</span>
+            <span className="text-gray-400">·</span>
+            <span className="text-gray-500">{formatBookmarkTime(book.bookmarkAt) || '刚刚'}</span>
+          </div>
+        )}
         {/* Progress Bar */}
         <div className="h-[2px] w-full bg-gray-200/30">
           <motion.div 
@@ -464,7 +560,7 @@ export default function ReadingArea({
             className="absolute top-16 left-1/2 transform -translate-x-1/2 bg-[#8E2A2A] text-white px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 text-sm font-medium"
           >
             <Bookmark size={16} fill="currentColor" />
-            已保存书签
+            已保存书签：{book.bookmarkChapter || '当前章节'}
           </motion.div>
         )}
       </AnimatePresence>
@@ -503,10 +599,10 @@ export default function ReadingArea({
             }}
           >
             {/* Visual Bookmark Marker */}
-            {book.lastReadPosition !== undefined && book.lastReadPosition > 0 && (
+            {hasBookmark && (
               <div 
                 className="absolute left-[-60px] right-[-60px] border-t border-dashed border-[#8E2A2A]/30 flex justify-end"
-                style={{ top: `${book.lastReadPosition}px` }}
+                style={{ top: `${Math.max(2, Math.min(98, book.progress || 0))}%` }}
               >
                 <div className="flex items-center gap-1 -mt-3 bg-paper px-2 text-[#8E2A2A]/60">
                   <Bookmark size={12} fill="currentColor" />
@@ -595,7 +691,7 @@ export default function ReadingArea({
                                             {note.sender === 'user' ? '我的批注' : 'TA 的留言'}
                                           </span>
                                         </div>
-                                        <div className={`pl-8 ${note.sender === 'user' && (!note.chatHistory || note.chatHistory.length === 0) ? 'font-hand text-2xl text-[#8E2A2A] tracking-wide transform -rotate-1' : 'font-serif text-sm text-[#2c2826]'} leading-relaxed`}>
+                                        <div className="pl-8 font-serif text-sm text-[#2c2826] leading-relaxed">
                                           {note.chatHistory && note.chatHistory.length > 0 ? (
                                             <div className="space-y-3 font-serif text-sm">
                                               {note.chatHistory.map((msg, i) => (

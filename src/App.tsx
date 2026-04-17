@@ -56,6 +56,70 @@ export default function App() {
   });
   const [readingTime, setReadingTime] = useState(() => parseInt(localStorage.getItem('app_readingTime') || '0', 10));
 
+  useEffect(() => {
+    const logKey = 'app_debugLogs';
+    const maxLogs = 300;
+    const appendLog = (level: 'log' | 'warn' | 'error', payload: unknown[]) => {
+      try {
+        const prev = JSON.parse(localStorage.getItem(logKey) || '[]') as any[];
+        const entry = {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+          time: Date.now(),
+          level,
+          message: payload.map((item) => {
+            if (typeof item === 'string') return item;
+            try {
+              return JSON.stringify(item);
+            } catch {
+              return String(item);
+            }
+          }).join(' ')
+        };
+        const next = [...prev, entry].slice(-maxLogs);
+        localStorage.setItem(logKey, JSON.stringify(next));
+      } catch {
+        // ignore logging failures
+      }
+    };
+
+    const originalConsole = {
+      log: console.log.bind(console),
+      warn: console.warn.bind(console),
+      error: console.error.bind(console),
+    };
+
+    console.log = (...args: unknown[]) => {
+      appendLog('log', args);
+      originalConsole.log(...args);
+    };
+    console.warn = (...args: unknown[]) => {
+      appendLog('warn', args);
+      originalConsole.warn(...args);
+    };
+    console.error = (...args: unknown[]) => {
+      appendLog('error', args);
+      originalConsole.error(...args);
+    };
+
+    const handleWindowError = (event: ErrorEvent) => {
+      appendLog('error', [`window.error: ${event.message}`, event.filename, event.lineno, event.colno]);
+    };
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      appendLog('error', ['unhandledrejection', event.reason]);
+    };
+
+    window.addEventListener('error', handleWindowError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+    return () => {
+      console.log = originalConsole.log;
+      console.warn = originalConsole.warn;
+      console.error = originalConsole.error;
+      window.removeEventListener('error', handleWindowError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, []);
+
   const backupLocalStorageKeys = [
     'app_apiConfig',
     'app_apiPresets',

@@ -8,6 +8,10 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Expose npm package version to the client as a Vite env var (dev only).
+  // Note: Vite only exposes vars prefixed with VITE_.
+  process.env.VITE_APP_VERSION = process.env.npm_package_version || process.env.VITE_APP_VERSION || 'unknown';
+
   app.use(express.json());
 
   // API Route for Link Fetching

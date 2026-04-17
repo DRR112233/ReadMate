@@ -55,6 +55,8 @@ export interface Book {
   content?: string;
   originalEpub?: ArrayBuffer; // Store original EPUB for native rendering
   lastReadPosition?: number;
+  bookmarkAt?: number;
+  bookmarkChapter?: string;
   annotations?: Annotation[];
 }
 

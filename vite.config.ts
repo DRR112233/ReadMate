@@ -9,6 +9,8 @@ export default defineConfig(({mode}) => {
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      // Ensure app version is always available on client (dev + build).
+      'import.meta.env.VITE_APP_VERSION': JSON.stringify(process.env.npm_package_version || 'unknown'),
     },
     resolve: {
       alias: {

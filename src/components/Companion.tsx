@@ -6,8 +6,9 @@ import { updateApiConfig, sendMessage, fetchModels } from '../services/geminiSer
 import Markdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+import { BUILD_ID } from '../buildInfo';
 
 interface CompanionProps {
   persona: string;
@@ -77,6 +78,14 @@ export default function Companion({
     localStorage.setItem('app_memoAiFrequency', memoAiFrequency.toString());
   }, [memoAiFrequency]);
   const [isRestoringBackup, setIsRestoringBackup] = useState(false);
+  const [devTapCount, setDevTapCount] = useState(0);
+  const [lastDevTapAt, setLastDevTapAt] = useState(0);
+  const [showDevPanel, setShowDevPanel] = useState(false);
+  const [devLogs, setDevLogs] = useState<Array<{ id: string; time: number; level: string; message: string }>>([]);
+  const [autoCopyErrorsOnOpen, setAutoCopyErrorsOnOpen] = useState(() => {
+    const v = localStorage.getItem('app_dev_autoCopyErrorsOnOpen');
+    return v ? v === '1' : true;
+  });
 
   const daysTogether = Math.max(1, Math.ceil((Date.now() - startDate) / (1000 * 60 * 60 * 24)));
   const finishedBooks = books.filter(b => b.progress === 100 || b.status === 'finished').length;
@@ -85,6 +94,170 @@ export default function Companion({
   
   const handleUpdateBook = (book: Book) => {
     // This is a placeholder, App.tsx handles this
+  };
+
+  const loadDevLogs = () => {
+    try {
+      const logs = JSON.parse(localStorage.getItem('app_debugLogs') || '[]');
+      setDevLogs(Array.isArray(logs) ? logs : []);
+    } catch {
+      setDevLogs([]);
+    }
+  };
+
+  useEffect(() => {
+    if (showDevPanel) {
+      loadDevLogs();
+    }
+  }, [showDevPanel]);
+
+  useEffect(() => {
+    if (!showDevPanel) return;
+    if (!autoCopyErrorsOnOpen) return;
+    // Let logs load first, then copy.
+    const t = setTimeout(() => {
+      copyRecentErrors();
+    }, 120);
+    return () => clearTimeout(t);
+  }, [showDevPanel, autoCopyErrorsOnOpen, devLogs.length]);
+
+  useEffect(() => {
+    localStorage.setItem('app_dev_autoCopyErrorsOnOpen', autoCopyErrorsOnOpen ? '1' : '0');
+  }, [autoCopyErrorsOnOpen]);
+
+  const handleSecretTap = () => {
+    const now = Date.now();
+    const withinWindow = now - lastDevTapAt < 1200;
+    const nextCount = withinWindow ? devTapCount + 1 : 1;
+    setDevTapCount(nextCount);
+    setLastDevTapAt(now);
+    if (nextCount >= 5) {
+      setShowDevPanel(true);
+      setDevTapCount(0);
+      setLastDevTapAt(0);
+      loadDevLogs();
+    }
+  };
+
+  const getDiagnosticPayload = () => {
+    const appBooks = JSON.parse(localStorage.getItem('app_books') || '[]');
+    const appJournals = JSON.parse(localStorage.getItem('app_journals') || '[]');
+    const appMemos = JSON.parse(localStorage.getItem('app_memos') || '[]');
+    const appLogs = JSON.parse(localStorage.getItem('app_debugLogs') || '[]');
+    return {
+      generatedAt: Date.now(),
+      platform: Capacitor.getPlatform(),
+      userAgent: navigator.userAgent,
+      build: {
+        appVersion: (import.meta as any)?.env?.VITE_APP_VERSION || null,
+        buildId: BUILD_ID,
+      },
+      appSummary: {
+        books: Array.isArray(appBooks) ? appBooks.length : 0,
+        journals: Array.isArray(appJournals) ? appJournals.length : 0,
+        memos: Array.isArray(appMemos) ? appMemos.length : 0,
+      },
+      readingSettings: {
+        fontSize: localStorage.getItem('reading_fontSize'),
+        lineHeight: localStorage.getItem('reading_lineHeight'),
+        paragraphSpacing: localStorage.getItem('reading_paragraphSpacing'),
+        theme: localStorage.getItem('reading_theme'),
+      },
+      logs: Array.isArray(appLogs) ? appLogs.slice(-200) : [],
+    };
+  };
+
+  const exportDiagnosticReport = async () => {
+    try {
+      const payload = getDiagnosticPayload();
+      const body = JSON.stringify(payload, null, 2);
+      const date = new Date().toISOString().replace(/[:.]/g, '-');
+      const fileName = `readmate-diagnostics-${date}.json`;
+
+      if (Capacitor.isNativePlatform()) {
+        const file = await Filesystem.writeFile({
+          path: `ReadMate/${fileName}`,
+          data: body,
+          encoding: Encoding.UTF8,
+          directory: Directory.Documents,
+          recursive: true,
+        });
+        try {
+          await Share.share({
+            title: 'ReadMate 诊断报告',
+            text: '用于排查问题的诊断报告',
+            url: file.uri,
+            dialogTitle: '导出诊断报告',
+          });
+        } catch {
+          // ignore share cancel
+        }
+      } else {
+        const blob = new Blob([body], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+      alert('诊断报告已导出。');
+    } catch (error) {
+      console.error('Export diagnostics failed:', error);
+      alert('导出失败，请稍后重试。');
+    }
+  };
+
+  const clearDebugLogs = () => {
+    localStorage.removeItem('app_debugLogs');
+    setDevLogs([]);
+    alert('调试日志已清空。');
+  };
+
+  const resetReadingPrefs = () => {
+    ['reading_fontSize', 'reading_lineHeight', 'reading_paragraphSpacing', 'reading_aiFrequency', 'reading_theme'].forEach((k) => {
+      localStorage.removeItem(k);
+    });
+    alert('阅读设置已重置，重新进入阅读页后生效。');
+  };
+
+  const copyQuickSummary = async () => {
+    const payload = getDiagnosticPayload();
+    const summary = [
+      `平台: ${payload.platform}`,
+      `时间: ${new Date(payload.generatedAt).toLocaleString()}`,
+      `书籍: ${payload.appSummary.books}`,
+      `手账: ${payload.appSummary.journals}`,
+      `便签: ${payload.appSummary.memos}`,
+      `日志条数: ${payload.logs.length}`,
+    ].join('\n');
+    try {
+      await navigator.clipboard.writeText(summary);
+      alert('诊断摘要已复制。');
+    } catch {
+      alert(summary);
+    }
+  };
+
+  const copyRecentErrors = async () => {
+    const logs = [...devLogs].filter((log) => log.level === 'error' || log.level === 'warn');
+    const recent = logs.slice(-30).reverse();
+    if (recent.length === 0) {
+      alert('最近没有 error/warn 日志。');
+      return;
+    }
+    const text = recent.map((log) => {
+      const ts = new Date(log.time).toLocaleString();
+      return `[${ts}] [${log.level}] ${log.message}`;
+    }).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      alert(`已复制最近 ${recent.length} 条错误/警告日志。`);
+    } catch {
+      alert(text);
+    }
   };
 
   const startEditJournal = (entry: JournalEntry) => {
@@ -339,6 +512,7 @@ export default function Companion({
         Filesystem.writeFile({
           path: `ReadMate/${fileName}`,
           data: backupString,
+          encoding: Encoding.UTF8,
           directory: Directory.Documents,
           recursive: true,
         }).then(async (file) => {
@@ -381,7 +555,8 @@ export default function Companion({
     setIsRestoringBackup(true);
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text);
+      const cleanText = text.replace(/^\uFEFF/, '').trim();
+      const parsed = JSON.parse(cleanText);
       onRestoreBackup(parsed);
       alert('恢复成功，建议重新进入对应页面查看最新数据。');
     } catch (error) {
@@ -416,7 +591,7 @@ export default function Companion({
                 <div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 border-2 border-white rounded-full"></div>
               </div>
               <h2 className="mt-4 text-xl font-serif font-bold text-[#2c2826]">{companionName}</h2>
-              <p className="text-sm text-gray-500 mt-1 font-serif">专属陪伴 · 懂你所想</p>
+              <p className="text-sm text-gray-500 mt-1 font-serif" onClick={handleSecretTap}>专属陪伴 · 懂你所想</p>
             </div>
 
             {/* Stats / Milestones */}
@@ -927,7 +1102,7 @@ export default function Companion({
                     {entry.userNote && (
                       <div className="mb-4 pl-3">
                         <span className="text-[10px] text-gray-400 block mb-1">我的批注：</span>
-                        <p className="text-sm font-hand text-2xl text-[#8E2A2A] transform -rotate-1">{entry.userNote}</p>
+                        <p className="text-sm font-serif text-[#2c2826] whitespace-pre-wrap">{entry.userNote}</p>
                       </div>
                     )}
                     <div className="flex gap-3">
@@ -1183,6 +1358,107 @@ export default function Companion({
               )}
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showDevPanel && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm z-[180]"
+              onClick={() => setShowDevPanel(false)}
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 24, stiffness: 190 }}
+              className="absolute bottom-0 left-0 right-0 z-[190] bg-[#fdfbf7] rounded-t-3xl border-t border-[#e5e0d8] p-5 max-h-[75vh] flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base font-serif font-bold text-[#2c2826]">开发诊断面板</h3>
+                <button onClick={() => setShowDevPanel(false)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-full">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="mb-3 text-[11px] font-mono text-gray-500 bg-white rounded-xl border border-[#e5e0d8] px-3 py-2">
+                version: {((import.meta as any)?.env?.VITE_APP_VERSION || 'unknown')}  |  build: {BUILD_ID}
+              </div>
+              <div className="mb-4 flex items-center justify-between bg-white rounded-xl border border-[#e5e0d8] px-3 py-2">
+                <div className="text-xs font-serif text-gray-600">打开面板自动复制错误日志</div>
+                <button
+                  onClick={() => {
+                    const next = !autoCopyErrorsOnOpen;
+                    setAutoCopyErrorsOnOpen(next);
+                    if (next) {
+                      // copy immediately when enabling
+                      setTimeout(() => copyRecentErrors(), 50);
+                    }
+                  }}
+                  className={`w-12 h-7 rounded-full transition-colors relative ${autoCopyErrorsOnOpen ? 'bg-[#8E2A2A]' : 'bg-gray-200'}`}
+                  aria-label="自动复制错误日志开关"
+                >
+                  <span
+                    className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${autoCopyErrorsOnOpen ? 'translate-x-5' : 'translate-x-0.5'}`}
+                  />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <button onClick={exportDiagnosticReport} className="py-2.5 rounded-xl bg-[#8E2A2A] text-white text-xs font-serif font-bold">
+                  导出诊断报告
+                </button>
+                <button onClick={copyQuickSummary} className="py-2.5 rounded-xl bg-[#f4ecd8] text-[#8E2A2A] text-xs font-serif font-bold border border-[#eaddc5]">
+                  复制诊断摘要
+                </button>
+                <button onClick={copyRecentErrors} className="col-span-2 py-2.5 rounded-xl bg-[#fff4f4] text-[#8E2A2A] text-xs font-serif font-bold border border-[#ffdede]">
+                  复制最近错误日志（error/warn）
+                </button>
+                <button onClick={loadDevLogs} className="py-2.5 rounded-xl bg-white text-gray-700 text-xs font-serif font-bold border border-[#e5e0d8]">
+                  刷新日志
+                </button>
+                <button onClick={clearDebugLogs} className="py-2.5 rounded-xl bg-white text-red-600 text-xs font-serif font-bold border border-red-100">
+                  清空日志
+                </button>
+                <button onClick={resetReadingPrefs} className="col-span-2 py-2.5 rounded-xl bg-white text-[#8E2A2A] text-xs font-serif font-bold border border-[#e5e0d8]">
+                  重置阅读设置（字号/主题/间距）
+                </button>
+              </div>
+              <div className="text-[11px] text-gray-500 font-serif mb-2">
+                最近日志（{devLogs.length} 条，最多展示 80 条）
+              </div>
+              <div className="flex-1 overflow-y-auto bg-white rounded-2xl border border-[#e5e0d8] p-3 space-y-2">
+                {devLogs.length === 0 ? (
+                  <p className="text-xs text-gray-400 font-serif">暂无日志</p>
+                ) : (
+                  devLogs.slice(-80).reverse().map((log) => (
+                    <button
+                      key={log.id}
+                      onClick={async () => {
+                        const ts = new Date(log.time).toLocaleString();
+                        const text = `[${ts}] [${log.level}] ${log.message}`;
+                        try {
+                          await navigator.clipboard.writeText(text);
+                          alert('已复制该条日志。');
+                        } catch {
+                          alert(text);
+                        }
+                      }}
+                      className="w-full text-left text-[11px] font-mono leading-relaxed border-b border-[#f3eee6] pb-2 hover:bg-[#f4ecd8]/30 rounded-lg px-1"
+                      title="点击复制该条日志"
+                    >
+                      <div className="text-gray-400">
+                        [{new Date(log.time).toLocaleTimeString()}] {log.level}
+                      </div>
+                      <div className="text-[#2c2826] break-words">{log.message}</div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>

@@ -67,6 +67,21 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
     }
   };
 
+  const blobToDataUrl = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('封面转换失败'));
+      reader.readAsDataURL(blob);
+    });
+
+  const normalizeTextBlock = (text: string) =>
+    text
+      .replace(/\u00a0/g, ' ')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
   const handleImportClassic = (title: string, author: string, content: string) => {
     const newBook: Book = {
       id: Date.now().toString(),
@@ -112,16 +127,31 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
           const textContent = await page.getTextContent();
-          let lastY, text = '';
-          for (let item of textContent.items as any[]) {
-            if (lastY == item.transform[5] || !lastY) {
-              text += item.str;
-            } else {
-              text += '\n' + item.str;
+          let text = '';
+          let lastY: number | null = null;
+          let lastX: number | null = null;
+          const lineBreakThreshold = 2;
+          const wordGapThreshold = 3;
+
+          for (const item of textContent.items as any[]) {
+            const raw = (item.str || '') as string;
+            const str = raw.replace(/\s+/g, ' ').trim();
+            if (!str) continue;
+            const y = item.transform?.[5] ?? 0;
+            const x = item.transform?.[4] ?? 0;
+
+            if (lastY !== null && Math.abs(y - lastY) > lineBreakThreshold) {
+              text += '\n';
+            } else if (lastX !== null && x - lastX > wordGapThreshold) {
+              text += ' ';
             }
-            lastY = item.transform[5];
+
+            text += str;
+            lastY = y;
+            lastX = x + ((item.width as number) || str.length * 5);
           }
-          content += text + '\n\n';
+
+          content += normalizeTextBlock(text) + '\n\n';
         }
       } else if (file.name.endsWith('.epub')) {
         const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -139,51 +169,75 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
           if (metadata.title) title = metadata.title;
           if (metadata.creator) author = metadata.creator;
           const coverUrl = await book.coverUrl();
-          if (coverUrl) cover = coverUrl;
+          if (coverUrl) {
+            // ebook coverUrl is often a temporary blob URL and breaks after restart.
+            // Convert it to a data URL so it can be persisted in localStorage.
+            try {
+              const coverResp = await fetch(coverUrl);
+              const coverBlob = await coverResp.blob();
+              cover = await blobToDataUrl(coverBlob);
+            } catch (coverErr) {
+              console.warn('Failed to persist epub cover, fallback to temporary url', coverErr);
+              cover = coverUrl;
+            }
+          }
         } catch (e) {
           console.warn("Failed to load epub metadata", e);
         }
 
+        const navigation = await book.loaded.navigation;
+        const tocByHref = new Map<string, string>();
+        const collectToc = (items: any[]) => {
+          for (const item of items || []) {
+            if (item?.href && item?.label) {
+              const key = String(item.href).split('#')[0];
+              tocByHref.set(key, String(item.label));
+            }
+            if (item?.subitems?.length) {
+              collectToc(item.subitems);
+            }
+          }
+        };
+        collectToc((navigation as any)?.toc || []);
+
         const spine = await book.loaded.spine;
+        let lastChapterTitle = '';
         for (const item of (spine as any).spineItems) {
           try {
             const doc = await item.load(book.load.bind(book));
-            
-            // Better text extraction: walk the DOM and extract block-level text
+
+            const href = String((item as any).href || '').split('#')[0];
+            const tocTitle = tocByHref.get(href);
+            if (tocTitle && tocTitle !== lastChapterTitle) {
+              content += `${tocTitle}\n\n`;
+              lastChapterTitle = tocTitle;
+            }
+
+            const body = doc.body || doc.querySelector('body');
             let chapterText = '';
-            const walkDOM = (node: Node) => {
-              if (node.nodeType === Node.TEXT_NODE) {
-                const text = node.textContent?.trim();
-                if (text) {
-                  chapterText += text;
+            if (body) {
+              const blocks = body.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li, blockquote, pre');
+              blocks.forEach((block) => {
+                const tag = block.tagName.toLowerCase();
+                const rawText = tag === 'pre' ? block.textContent || '' : block.textContent?.replace(/\s+/g, ' ') || '';
+                const text = rawText.trim();
+                if (!text) return;
+
+                if (tag.startsWith('h')) {
+                  chapterText += `${text}\n\n`;
+                  return;
                 }
-              } else if (node.nodeType === Node.ELEMENT_NODE) {
-                const el = node as Element;
-                const tagName = el.tagName.toLowerCase();
-                const isBlock = ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote'].includes(tagName);
-                
-                if (isBlock && chapterText.length > 0 && !chapterText.endsWith('\n')) {
-                  chapterText += '\n';
+                if (tag === 'li') {
+                  chapterText += `- ${text}\n`;
+                  return;
                 }
-                
-                for (const child of Array.from(node.childNodes)) {
-                  walkDOM(child);
-                }
-                
-                if (isBlock) {
-                  chapterText += '\n\n';
-                }
-              }
-            };
-            
-            const body = doc.body || doc.querySelector('body') || doc;
-            walkDOM(body);
-            
-            // Clean up excessive newlines
-            chapterText = chapterText.replace(/\n{3,}/g, '\n\n').trim();
-            
+                chapterText += `${text}\n\n`;
+              });
+            }
+
+            chapterText = normalizeTextBlock(chapterText);
             if (chapterText) {
-              content += chapterText + '\n\n';
+              content += `${chapterText}\n\n`;
             }
           } catch (err) {
             console.warn("Failed to load epub item", err);
