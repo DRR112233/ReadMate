@@ -1,0 +1,51 @@
+.panel {
+  background: #fffdfa;
+  border: 1px solid rgba(210, 190, 170, 0.25);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 8px 20px rgba(91, 70, 54, 0.09);
+}
+
+.word {
+  font-size: 24px;
+  color: #3a2e20;
+  margin-bottom: 8px;
+}
+
+.sub {
+  font-size: 12px;
+  color: #9f8f7e;
+  margin-bottom: 12px;
+}
+
+.block {
+  margin-top: 12px;
+}
+
+.label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #b19f8c;
+  margin-bottom: 6px;
+}
+
+.content {
+  font-size: 14px;
+  color: #5a4a3a;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.item {
+  font-size: 13px;
+  color: #6b5a4a;
+  background: #f8f3ec;
+  border-radius: 10px;
+  padding: 8px 10px;
+}

@@ -1,0 +1,44 @@
+.wrap {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #faf7f2 0%, #f5efe8 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 50;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  background: #fffdfa;
+  border: 1px solid rgba(210, 190, 170, 0.35);
+  border-radius: 22px;
+  padding: 18px;
+}
+
+.word {
+  text-align: center;
+  font-size: 30px;
+  color: #8E2A2A;
+}
+
+.textarea {
+  width: 100%;
+  margin-top: 14px;
+  min-height: 140px;
+  border-radius: 14px;
+  border: 1px solid #e5e0d8;
+  padding: 12px;
+  font-size: 14px;
+  color: #2c2826;
+  resize: none;
+}
+
+.actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

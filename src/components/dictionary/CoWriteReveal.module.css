@@ -1,0 +1,53 @@
+.wrap {
+  position: absolute;
+  inset: 0;
+  background: rgba(14, 10, 6, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 55;
+  padding: 18px;
+}
+
+.card {
+  width: 100%;
+  max-width: 430px;
+  background: #fffdfa;
+  border: 1px solid rgba(210, 190, 170, 0.35);
+  border-radius: 20px;
+  padding: 16px;
+}
+
+.word {
+  text-align: center;
+  font-size: 28px;
+  color: #8E2A2A;
+  margin-bottom: 8px;
+}
+
+.block {
+  border-radius: 14px;
+  border: 1px solid #ede5db;
+  background: #f8f4ee;
+  padding: 10px;
+  margin-top: 8px;
+}
+
+.label {
+  font-size: 11px;
+  color: #b0a090;
+  margin-bottom: 4px;
+}
+
+.text {
+  font-size: 14px;
+  color: #5a4a3a;
+  line-height: 1.7;
+}
+
+.actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}

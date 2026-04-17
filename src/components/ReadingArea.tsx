@@ -8,6 +8,15 @@ import { Annotation } from '../types';
 import Markdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { isChapterTitleLine } from '../utils/chapter';
+import { createId } from '../utils/id';
+import {
+  buildInlineReplyPrompt,
+  buildManualNotePrompt,
+  buildProactiveNotePrompt,
+  buildShareQuotePrompt,
+} from '../utils/promptBuilders';
+import { rememberConversationTurn, rememberUserInput } from '../services/memoryService';
+import { buildPromptEnvelope } from '../utils/promptEnvelope';
 
 interface ReadingAreaProps {
   book: Book;
@@ -20,6 +29,7 @@ interface ReadingAreaProps {
   onUpdateJournal?: (entry: import('../types').JournalEntry) => void;
   companionName: string;
   companionAvatar: string;
+  taReadingProgress?: number;
 }
 
 type Theme = 'light' | 'dark' | 'sepia';
@@ -34,7 +44,8 @@ export default function ReadingArea({
   onSaveJournal,
   onUpdateJournal,
   companionName,
-  companionAvatar
+  companionAvatar,
+  taReadingProgress = 0,
 }: ReadingAreaProps) {
   const [selectedText, setSelectedText] = useState('');
   const [selectionPos, setSelectionPos] = useState<{ x: number; y: number } | null>(null);
@@ -56,6 +67,9 @@ export default function ReadingArea({
   const [isReplying, setIsReplying] = useState(false);
   const hasBookmark = book.lastReadPosition !== undefined && book.lastReadPosition > 0;
   const lastScrollTopRef = useRef(0);
+  const proactiveInFlightRef = useRef(false);
+  const lastProactiveAtRef = useRef(0);
+  const lastProactiveParagraphRef = useRef<number | null>(null);
   const formatBookmarkTime = (timestamp?: number) => {
     if (!timestamp) return '';
     try {
@@ -74,7 +88,7 @@ export default function ReadingArea({
     if (!replyText.trim() || !onUpdateJournal) return;
     setIsReplying(true);
 
-    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: replyText, timestamp: Date.now() };
+    const userMsg: Message = { id: createId(), sender: 'user', text: replyText, timestamp: Date.now() };
     const updatedHistory = [...existingHistory, userMsg];
 
     // Optimistic update
@@ -84,13 +98,28 @@ export default function ReadingArea({
     }
 
     try {
-      const prompt = `我在读《${book.title}》时，关于这句话：“${quote}”，我回复了你：“${replyText}”。请你作为一个恋人，给我回一条简短、深情且有共鸣的留言。`;
-      const response = await sendMessage(prompt);
-      const aiMsg: Message = { id: Date.now().toString(), sender: 'ai', text: response, timestamp: Date.now() };
+      const prompt = buildInlineReplyPrompt(book.title, quote, replyText);
+      const envelope = buildPromptEnvelope({
+        taskType: 'chat',
+        prompt,
+        memory: {
+          channel: 'inline-reply',
+          bookTitle: book.title,
+        },
+      });
+      const response = await sendMessage({ messages: envelope.messages }, { taskType: 'chat' });
+      const aiMsg: Message = { id: createId(), sender: 'ai', text: response, timestamp: Date.now() };
       
       if (entry) {
         onUpdateJournal({ ...entry, chatHistory: [...updatedHistory, aiMsg] });
       }
+      rememberUserInput({ source: 'manual_note', text: replyText, bookTitle: book.title, channel: 'inline-reply' });
+      rememberConversationTurn({
+        channel: 'inline-reply',
+        userText: replyText,
+        aiText: response,
+        bookTitle: book.title,
+      });
     } catch (error) {
       console.error('Inline reply failed:', error);
     } finally {
@@ -101,6 +130,13 @@ export default function ReadingArea({
   };
   const [showTOC, setShowTOC] = useState(false);
   const [readingProgress, setReadingProgress] = useState(book.progress || 0);
+
+  const normalizeUserNote = (text?: string) =>
+    (text || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[，。！？、,.!?;；:："“”"'`~（）()【】\[\]<>《》]/g, '');
   
   // Reading Settings
   const [fontSize, setFontSize] = useState(() => {
@@ -139,6 +175,10 @@ export default function ReadingArea({
 
     const triggerProactiveNote = async () => {
       if (!scrollRef.current) return;
+      if (proactiveInFlightRef.current) return;
+      const now = Date.now();
+      // 全局冷却，避免短时间连续触发
+      if (now - lastProactiveAtRef.current < 90000) return;
       
       const paragraphs = book.content.split('\n\n');
       
@@ -150,14 +190,26 @@ export default function ReadingArea({
       const offset = Math.floor(Math.random() * 5) - 2;
       const targetIdx = Math.max(0, Math.min(paragraphs.length - 1, estimatedCurrentIdx + offset));
       const paragraph = paragraphs[targetIdx];
+      if (lastProactiveParagraphRef.current === targetIdx) return;
       
       if (!paragraph || paragraph.length < 20) return; // Skip very short paragraphs
 
       try {
-        const response = await sendMessage(`我们正在读这段话：“${paragraph.substring(0, 100)}...”。请你作为一个恋人，针对这段话或者其中的某个点，写一条简短的、充满情感的批注（50字以内）。`);
+        proactiveInFlightRef.current = true;
+        const basePrompt = buildProactiveNotePrompt(paragraph.substring(0, 100));
+        const envelope = buildPromptEnvelope({
+          taskType: 'proactive',
+          prompt: basePrompt,
+          memory: {
+            channel: 'proactive-note',
+            bookTitle: book.title,
+          },
+        });
+        const response = await sendMessage({ messages: envelope.messages }, { taskType: 'proactive' });
         
         const newEntry: import('../types').JournalEntry = {
-          id: Date.now().toString(),
+          id: createId(),
+          entryType: 'proactive',
           bookTitle: book.title,
           quote: paragraph.substring(0, Math.min(paragraph.length, 30)), // Simplified quote
           aiResponse: response,
@@ -166,8 +218,12 @@ export default function ReadingArea({
         };
         
         onSaveJournal(newEntry);
+        lastProactiveAtRef.current = Date.now();
+        lastProactiveParagraphRef.current = targetIdx;
       } catch (error) {
         console.error('Proactive note failed:', error);
+      } finally {
+        proactiveInFlightRef.current = false;
       }
     };
 
@@ -429,14 +485,25 @@ export default function ReadingArea({
   const handleAddManualNote = () => {
     const quoteToUse = activeQuote || selectedText;
     if (!quoteToUse || !noteText.trim()) return;
+    const normalizedCurrentNote = normalizeUserNote(noteText);
+    const hasDuplicate = journalEntries.some((entry) =>
+      entry.bookTitle === book.title &&
+      normalizeUserNote(entry.quote) === normalizeUserNote(quoteToUse) &&
+      normalizeUserNote(entry.userNote) === normalizedCurrentNote
+    );
+    if (hasDuplicate) {
+      alert('这条批注已经写过啦，我帮你去重了。');
+      return;
+    }
     const resolvedParagraphIdx = activeParagraphIdx ?? getCurrentParagraphIdx();
 
-    const newJournalId = Date.now().toString();
-    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: noteText, timestamp: Date.now() };
+    const newJournalId = createId();
+    const userMsg: Message = { id: createId(), sender: 'user', text: noteText, timestamp: Date.now() };
 
     // Optimistically save journal with just user note
     onSaveJournal({
       id: newJournalId,
+      entryType: 'manual',
       quote: quoteToUse,
       userNote: noteText,
       aiResponse: '...', // Placeholder until AI replies
@@ -449,13 +516,22 @@ export default function ReadingArea({
     // Trigger AI response to the user's note
     const triggerAiReply = async () => {
       try {
-        const prompt = `我在读《${book.title}》时，看到这句话：“${quoteToUse}”。我写下了这段批注：“${noteText}”。请你作为一个恋人，针对我的批注或者这段话，给我回一条简短、深情且有共鸣的留言（50字以内）。`;
-        const response = await sendMessage(prompt);
-        const aiMsg: Message = { id: Date.now().toString(), sender: 'ai', text: response, timestamp: Date.now() };
+        const prompt = buildManualNotePrompt(book.title, quoteToUse, noteText);
+        const envelope = buildPromptEnvelope({
+          taskType: 'chat',
+          prompt,
+          memory: {
+            channel: 'manual-note',
+            bookTitle: book.title,
+          },
+        });
+        const response = await sendMessage({ messages: envelope.messages }, { taskType: 'chat' });
+        const aiMsg: Message = { id: createId(), sender: 'ai', text: response, timestamp: Date.now() };
         
         if (onUpdateJournal) {
           onUpdateJournal({
             id: newJournalId,
+            entryType: 'manual',
             quote: quoteToUse,
             userNote: noteText,
             aiResponse: response,
@@ -465,11 +541,19 @@ export default function ReadingArea({
             paragraphIdx: resolvedParagraphIdx
           });
         }
+        rememberUserInput({ source: 'manual_note', text: noteText, bookTitle: book.title, channel: 'manual-note' });
+        rememberConversationTurn({
+          channel: 'manual-note',
+          userText: noteText,
+          aiText: response,
+          bookTitle: book.title,
+        });
       } catch (error) {
         console.error('AI reply to note failed:', error);
         if (onUpdateJournal) {
           onUpdateJournal({
             id: newJournalId,
+            entryType: 'manual',
             quote: quoteToUse,
             userNote: noteText,
             aiResponse: '（TA 暂时走神了，没有回复）',
@@ -507,15 +591,34 @@ export default function ReadingArea({
     const next = paragraphs[Math.min(paragraphs.length - 1, ctxIdx + 1)] || '';
     const contextBlock = [prev, cur, next].filter(Boolean).join('\n\n');
 
-    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: `我划线了这句话：“${quote}”`, timestamp: Date.now() };
+    const userMsg: Message = { id: createId(), sender: 'user', text: `我划线了这句话：“${quote}”`, timestamp: Date.now() };
     setMessages([userMsg]);
+    rememberUserInput({
+      source: 'share_quote',
+      text: `我划线了这句话：“${quote}”`,
+      bookTitle: book.title,
+      channel: 'share-quote',
+    });
 
     try {
-      const res = await sendMessage(
-        `我在读《${book.title}》时划线了这句话：“${quote}”。\n\n为了给你更多语境，这里是这一段及上下文（上一段/本段/下一段）：\n${contextBlock}\n\n请你作为一个恋人，针对这句话写一条简短、深情的留言（50字以内）。`
-      );
+      const basePrompt = buildShareQuotePrompt(book.title, quote, contextBlock);
+      const envelope = buildPromptEnvelope({
+        taskType: 'chat',
+        prompt: basePrompt,
+        memory: {
+          channel: 'share-quote',
+          bookTitle: book.title,
+        },
+      });
+      const res = await sendMessage({ messages: envelope.messages }, { taskType: 'chat' });
       const aiMsg: Message = { id: (Date.now() + 1).toString(), sender: 'ai', text: res, timestamp: Date.now() };
       setMessages(prev => [...prev, aiMsg]);
+      rememberConversationTurn({
+        channel: 'share-quote',
+        userText: `我划线了这句话：“${quote}”`,
+        aiText: res,
+        bookTitle: book.title,
+      });
       
       // “分享给 TA”仅用于阅读聊天，不写入情绪手账
     } catch (e) {
@@ -530,6 +633,10 @@ export default function ReadingArea({
       case 'light': default: return 'bg-paper text-[#3a3532]';
     }
   };
+
+  const taStatusText = taReadingProgress >= readingProgress
+    ? '你先读，我在这里等你。'
+    : '我也读到这一章了，比你慢一点。';
 
   return (
     <div className={`relative h-full w-full flex flex-col overflow-hidden transition-colors duration-300 ${getThemeStyles()}`}>
@@ -787,19 +894,6 @@ export default function ReadingArea({
                                             )
                                           )}
 
-                                          {/* Replies drawer (chat-style only for the dialog thread). */}
-                                          {note.chatHistory && note.chatHistory.length > 0 && (
-                                            <div className="mt-3 border-l-2 border-[#e5e0d8] pl-3 space-y-2">
-                                              {note.chatHistory.map((msg, i) => (
-                                                <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
-                                                  <span className="text-[10px] text-gray-400 mb-1">{msg.sender === 'user' ? '我' : 'TA'}</span>
-                                                  <div className={`px-3 py-2 rounded-xl text-sm ${msg.sender === 'user' ? 'bg-[#8E2A2A] text-white' : 'bg-white border border-[#e5e0d8] text-[#2c2826]'}`}>
-                                                    <Markdown>{msg.text}</Markdown>
-                                                  </div>
-                                                </div>
-                                              ))}
-                                            </div>
-                                          )}
                                         </div>
                                         <div className="pl-8 mt-2">
                                           {replyingToNoteId === note.id ? (
@@ -1009,6 +1103,20 @@ export default function ReadingArea({
         </button>
       )}
 
+      {!isChatOpen && (
+        <div className="absolute bottom-20 left-4 right-4 z-20">
+          <div className="rounded-2xl border border-[#e5e0d8] bg-white/88 backdrop-blur-md px-4 py-2 shadow-sm">
+            <div className="flex items-center justify-between text-xs font-serif text-[#6b5a4a]">
+              <span>TA 也在这里 · 进度 {Math.round(taReadingProgress)}%</span>
+              <span className="text-[11px] text-[#8E2A2A]">{taStatusText}</span>
+            </div>
+            <div className="mt-1.5 h-1.5 rounded-full bg-[#efe8dc] overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-[#b28a63] to-[#8E2A2A]" style={{ width: `${Math.max(0, Math.min(100, taReadingProgress))}%` }} />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Table of Contents Drawer */}
       <AnimatePresence>
         {showTOC && (
@@ -1216,6 +1324,8 @@ export default function ReadingArea({
                   onImportBook={onImportBook}
                   companionName={companionName}
                   companionAvatar={companionAvatar}
+                  memoryChannel={`reading-chat-${book.id}`}
+                  memoryBookTitle={book.title}
                   getContextForAi={() => {
                     const idx = getCurrentParagraphIdx();
                     const before = paragraphs.slice(Math.max(0, idx - 2), idx).join('\n\n');

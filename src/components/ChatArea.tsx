@@ -5,6 +5,10 @@ import { sendMessage } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import { createId } from '../utils/id';
+import { buildChatContextPrompt } from '../utils/promptBuilders';
+import { rememberConversationTurn, rememberUserInput } from '../services/memoryService';
+import { buildPromptEnvelope } from '../utils/promptEnvelope';
 
 interface ChatAreaProps {
   messages: Message[];
@@ -16,6 +20,8 @@ interface ChatAreaProps {
   companionName?: string;
   companionAvatar?: string;
   getContextForAi?: () => string;
+  memoryChannel?: string;
+  memoryBookTitle?: string;
 }
 
 export default function ChatArea({ 
@@ -27,7 +33,9 @@ export default function ChatArea({
   onImportBook,
   companionName = '你的恋人',
   companionAvatar = '',
-  getContextForAi
+  getContextForAi,
+  memoryChannel = 'reading-chat',
+  memoryBookTitle,
 }: ChatAreaProps) {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -66,13 +74,14 @@ export default function ChatArea({
     if (!input.trim()) return;
 
     const userMsg: Message = {
-      id: Date.now().toString(),
+      id: createId(),
       sender: 'user',
       text: input.trim(),
       timestamp: Date.now(),
     };
 
     setMessages(prev => [...prev, userMsg]);
+    rememberUserInput({ source: 'chat', text: userMsg.text, bookTitle: memoryBookTitle, channel: memoryChannel });
     setInput('');
   };
 
@@ -86,23 +95,37 @@ export default function ChatArea({
       const userText = lastUserMsg?.text || "请继续和我聊天吧";
       const ctx = (getContextForAi?.() || '').trim();
       const prompt = ctx
-        ? `用户正在阅读中与你聊天。\n\n【阅读上下文（截取）】\n${ctx}\n\n【用户消息】\n${userText}\n\n请你像恋人一样，简短、深情、贴合上下文地回复（50字以内）。`
+        ? buildChatContextPrompt(ctx, userText)
         : userText;
-      const responseText = await sendMessage(prompt);
+      const envelope = buildPromptEnvelope({
+        taskType: 'chat',
+        prompt,
+        memory: {
+          channel: memoryChannel,
+          bookTitle: memoryBookTitle,
+        },
+      });
+      const responseText = await sendMessage({ messages: envelope.messages }, { taskType: 'chat' });
       
       if (responseText) {
         const aiMsg: Message = {
-          id: (Date.now() + 1).toString(),
+          id: createId(),
           sender: 'ai',
           text: responseText,
           timestamp: Date.now(),
         };
         setMessages(prev => [...prev, aiMsg]);
+        rememberConversationTurn({
+          channel: memoryChannel,
+          userText,
+          aiText: responseText,
+          bookTitle: memoryBookTitle,
+        });
       }
     } catch (error) {
       console.error("Failed to generate response:", error);
       const errorMsg: Message = {
-        id: (Date.now() + 1).toString(),
+        id: createId(),
         sender: 'ai',
         text: "抱歉亲爱的，我刚才走神了，能再说一遍吗？",
         timestamp: Date.now(),

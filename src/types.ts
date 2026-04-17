@@ -7,6 +7,7 @@ export interface Message {
 
 export interface JournalEntry {
   id: string;
+  entryType?: 'manual' | 'chat' | 'proactive';
   quote: string;
   userNote?: string;
   aiResponse: string;
@@ -48,6 +49,8 @@ export interface Book {
   author: string;
   cover: string;
   progress: number;
+  addedAt?: number;
+  finishedAt?: number;
   status?: 'reading' | 'finished';
   isTaRecommendation?: boolean;
   taNote?: string;
@@ -59,6 +62,58 @@ export interface Book {
   bookmarkAt?: number;
   bookmarkChapter?: string;
   annotations?: Annotation[];
+  echoes?: EchoEntry[];
+}
+
+export interface PoemSlip {
+  id: string;
+  text: string;
+  title?: string;
+  bookTitle?: string;
+  chapterHint?: string;
+  moodHint?: string;
+  date: number;
+  source: 'daily' | 'manual';
+  isFavorite?: boolean;
+}
+
+export interface EchoEntry {
+  id: string;
+  content: string;
+  createdAt: number;
+}
+
+export interface DictionaryEntry {
+  id: string;
+  word: string;
+  wordEmoji?: string;
+  firstAppeared: {
+    bookId: string;
+    bookTitle: string;
+    chapterHint: string;
+    date: number;
+  };
+  userHighlights: string[];
+  userQuestions: string[];
+  aiReplies: string[];
+  aiWhisper: string;
+  collectedAt: number;
+  hitCount: number;
+  userDefinition?: string;
+  coWriteDate?: number;
+  isCoWritten?: boolean;
+  imageUrl?: string;
+  imageSource?: 'upload' | 'ai_generated';
+  imageGeneratedAt?: number;
+}
+
+export interface DictionaryCandidate {
+  id: string;
+  word: string;
+  hitCount: number;
+  bookTitle: string;
+  exampleSentence: string;
+  createdAt: number;
 }
 
 export const DEFAULT_PERSONA = `你现在是用户的虚拟恋人。你们正在一起阅读一篇文章/小说。

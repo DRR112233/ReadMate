@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjsLib from 'pdfjs-dist';
 import ePub from 'epubjs';
 import { chaptersToContent, splitTxtIntoChapters } from '../utils/chapter';
+import { createId } from '../utils/id';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
@@ -53,7 +54,12 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
   const handleToggleStatus = (e: React.MouseEvent, book: Book) => {
     e.stopPropagation();
     const newStatus = book.status === 'finished' ? 'reading' : 'finished';
-    onUpdateBook({ ...book, status: newStatus, progress: newStatus === 'finished' ? 100 : book.progress });
+    onUpdateBook({
+      ...book,
+      status: newStatus,
+      progress: newStatus === 'finished' ? 100 : book.progress,
+      finishedAt: newStatus === 'finished' ? Date.now() : undefined,
+    });
   };
 
   const handleDelete = (e: React.MouseEvent, id: string) => {
@@ -111,11 +117,12 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
 
   const handleImportClassic = (title: string, author: string, content: string) => {
     const newBook: Book = {
-      id: Date.now().toString(),
+      id: createId(),
       title,
       author,
       cover: `https://picsum.photos/seed/${title}/300/400`,
       progress: 0,
+      addedAt: Date.now(),
       content
     };
     onImportBook(newBook);
@@ -330,11 +337,12 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
       }
 
       const newBook: Book = {
-        id: Date.now().toString(),
+        id: createId(),
         title: title,
         author: author,
         cover: cover,
         progress: 0,
+        addedAt: Date.now(),
         content: normalizeTextBlock(content) || '无法提取文件内容。',
         originalEpub: originalEpubBuffer,
         // Keep original bytes so we can re-decode later if user reports garble.
@@ -369,11 +377,12 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
       const data = await response.json();
       
       const newBook: Book = {
-        id: Date.now().toString(),
+        id: createId(),
         title: data.title,
         author: data.author,
         cover: `https://picsum.photos/seed/${Date.now()}/300/400?blur=2`,
         progress: 0,
+        addedAt: Date.now(),
         content: data.content || '无法提取网页内容，请尝试其他链接。'
       };
       
