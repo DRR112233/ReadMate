@@ -8,6 +8,7 @@ import rehypeRaw from 'rehype-raw';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+import { Clipboard } from '@capacitor/clipboard';
 import { BUILD_ID } from '../buildInfo';
 
 interface CompanionProps {
@@ -86,6 +87,8 @@ export default function Companion({
     const v = localStorage.getItem('app_dev_autoCopyErrorsOnOpen');
     return v ? v === '1' : true;
   });
+  const [chapterTestLine, setChapterTestLine] = useState('');
+  const [chapterTestResult, setChapterTestResult] = useState<boolean | null>(null);
 
   const daysTogether = Math.max(1, Math.ceil((Date.now() - startDate) / (1000 * 60 * 60 * 24)));
   const finishedBooks = books.filter(b => b.progress === 100 || b.status === 'finished').length;
@@ -112,18 +115,35 @@ export default function Companion({
   }, [showDevPanel]);
 
   useEffect(() => {
-    if (!showDevPanel) return;
-    if (!autoCopyErrorsOnOpen) return;
-    // Let logs load first, then copy.
-    const t = setTimeout(() => {
-      copyRecentErrors();
-    }, 120);
-    return () => clearTimeout(t);
-  }, [showDevPanel, autoCopyErrorsOnOpen, devLogs.length]);
-
-  useEffect(() => {
     localStorage.setItem('app_dev_autoCopyErrorsOnOpen', autoCopyErrorsOnOpen ? '1' : '0');
   }, [autoCopyErrorsOnOpen]);
+
+  const copyText = async (text: string) => {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await Clipboard.write({ string: text });
+        return true;
+      }
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      try {
+        // Fallback for some WebView policies
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+  };
 
   const handleSecretTap = () => {
     const now = Date.now();
@@ -136,6 +156,10 @@ export default function Companion({
       setDevTapCount(0);
       setLastDevTapAt(0);
       loadDevLogs();
+      if (autoCopyErrorsOnOpen) {
+        // The tap sequence is a user gesture; copying here is more reliable.
+        setTimeout(() => copyRecentErrors(), 50);
+      }
     }
   };
 
@@ -216,6 +240,16 @@ export default function Companion({
     alert('调试日志已清空。');
   };
 
+  const runChapterTest = async () => {
+    try {
+      const mod = await import('../utils/chapter');
+      const ok = mod.isChapterTitleLine(chapterTestLine);
+      setChapterTestResult(ok);
+    } catch {
+      setChapterTestResult(null);
+    }
+  };
+
   const resetReadingPrefs = () => {
     ['reading_fontSize', 'reading_lineHeight', 'reading_paragraphSpacing', 'reading_aiFrequency', 'reading_theme'].forEach((k) => {
       localStorage.removeItem(k);
@@ -233,12 +267,8 @@ export default function Companion({
       `便签: ${payload.appSummary.memos}`,
       `日志条数: ${payload.logs.length}`,
     ].join('\n');
-    try {
-      await navigator.clipboard.writeText(summary);
-      alert('诊断摘要已复制。');
-    } catch {
-      alert(summary);
-    }
+    const ok = await copyText(summary);
+    alert(ok ? '诊断摘要已复制。' : summary);
   };
 
   const copyRecentErrors = async () => {
@@ -252,12 +282,8 @@ export default function Companion({
       const ts = new Date(log.time).toLocaleString();
       return `[${ts}] [${log.level}] ${log.message}`;
     }).join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
-      alert(`已复制最近 ${recent.length} 条错误/警告日志。`);
-    } catch {
-      alert(text);
-    }
+    const ok = await copyText(text);
+    alert(ok ? `已复制最近 ${recent.length} 条错误/警告日志。` : text);
   };
 
   const startEditJournal = (entry: JournalEntry) => {
@@ -271,6 +297,11 @@ export default function Companion({
       aiResponse: editJournalText
     });
     setEditingJournalId(null);
+  };
+
+  const autoResizeTextarea = (el: HTMLTextAreaElement) => {
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
   };
 
   const startEditUserNote = (entry: JournalEntry) => {
@@ -1102,7 +1133,7 @@ export default function Companion({
                     {entry.userNote && (
                       <div className="mb-4 pl-3">
                         <span className="text-[10px] text-gray-400 block mb-1">我的批注：</span>
-                        <p className="text-sm font-serif text-[#2c2826] whitespace-pre-wrap">{entry.userNote}</p>
+                        <p className="text-sm font-hand text-2xl text-[#8E2A2A] whitespace-pre-wrap transform -rotate-1">{entry.userNote}</p>
                       </div>
                     )}
                     <div className="flex gap-3">
@@ -1184,10 +1215,9 @@ export default function Companion({
                               </div>
                             </div>
                           )}
-                          <div 
-                            className="text-sm text-[#2c2826] leading-relaxed font-serif prose prose-sm prose-p:my-1 prose-a:text-[#8E2A2A]"
-                            dangerouslySetInnerHTML={{ __html: entry.aiResponse }}
-                          />
+                          <div className="font-hand text-xl text-[#5b4636] leading-relaxed tracking-wide">
+                            <Markdown rehypePlugins={[rehypeRaw]}>{entry.aiResponse}</Markdown>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1255,8 +1285,10 @@ export default function Companion({
                 <textarea
                   value={editJournalText}
                   onChange={(e) => setEditJournalText(e.target.value)}
+                  onInput={(e) => autoResizeTextarea(e.currentTarget)}
+                  onFocus={(e) => autoResizeTextarea(e.currentTarget)}
                   placeholder="写下你的随笔或待办..."
-                  className="w-full p-2 text-sm font-serif focus:outline-none resize-none min-h-[80px]"
+                  className="w-full p-4 text-base font-serif focus:outline-none resize-none min-h-[140px] rounded-xl border border-[#e5e0d8] bg-[#fdfbf7] leading-relaxed"
                 />
                 <div className="flex justify-end mt-2">
                   <button 
@@ -1319,7 +1351,9 @@ export default function Companion({
                         <textarea
                           value={editingMemoContent}
                           onChange={(e) => setEditingMemoContent(e.target.value)}
-                          className="w-full p-2 text-sm font-serif border border-[#e5e0d8] rounded-lg focus:outline-none focus:ring-1 focus:ring-[#8E2A2A] resize-none min-h-[60px]"
+                          onInput={(e) => autoResizeTextarea(e.currentTarget)}
+                          onFocus={(e) => autoResizeTextarea(e.currentTarget)}
+                          className="w-full p-4 text-base font-serif border border-[#e5e0d8] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#8E2A2A] resize-none min-h-[140px] bg-[#fdfbf7] leading-relaxed"
                         />
                         <div className="flex justify-end gap-2 mt-2">
                           <button 
@@ -1426,6 +1460,37 @@ export default function Companion({
                   重置阅读设置（字号/主题/间距）
                 </button>
               </div>
+
+              <div className="mb-4 bg-white rounded-2xl border border-[#e5e0d8] p-4">
+                <div className="text-xs font-serif font-bold text-[#2c2826] mb-2">分章正则测试</div>
+                <div className="text-[11px] text-gray-500 font-serif mb-2">输入一行标题，立即判断是否会被识别为“章节”。</div>
+                <input
+                  value={chapterTestLine}
+                  onChange={(e) => {
+                    setChapterTestLine(e.target.value);
+                    setChapterTestResult(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') runChapterTest();
+                  }}
+                  placeholder="例如：第十二章 风起"
+                  className="w-full px-3 py-2 rounded-xl border border-[#e5e0d8] text-sm font-serif"
+                />
+                <div className="mt-2 flex items-center justify-between">
+                  <button
+                    onClick={runChapterTest}
+                    className="px-3 py-1.5 rounded-xl bg-[#f4ecd8] text-[#8E2A2A] text-xs font-serif font-bold border border-[#eaddc5]"
+                  >
+                    测试
+                  </button>
+                  {chapterTestResult !== null && (
+                    <div className={`text-xs font-serif font-bold ${chapterTestResult ? 'text-green-600' : 'text-red-600'}`}>
+                      {chapterTestResult ? '命中：会被当作章节标题' : '未命中：不会被当作章节标题'}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="text-[11px] text-gray-500 font-serif mb-2">
                 最近日志（{devLogs.length} 条，最多展示 80 条）
               </div>
@@ -1439,12 +1504,8 @@ export default function Companion({
                       onClick={async () => {
                         const ts = new Date(log.time).toLocaleString();
                         const text = `[${ts}] [${log.level}] ${log.message}`;
-                        try {
-                          await navigator.clipboard.writeText(text);
-                          alert('已复制该条日志。');
-                        } catch {
-                          alert(text);
-                        }
+                        const ok = await copyText(text);
+                        alert(ok ? '已复制该条日志。' : text);
                       }}
                       className="w-full text-left text-[11px] font-mono leading-relaxed border-b border-[#f3eee6] pb-2 hover:bg-[#f4ecd8]/30 rounded-lg px-1"
                       title="点击复制该条日志"

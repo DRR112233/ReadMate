@@ -1,5 +1,7 @@
 # ReadMate -  AI 伴读系统
 
+![ReadMate](Generated%20Image%20April%2015%2C%202026%20-%206_38PM.png)
+
 ## 📖 项目简介
 一款专为需要情感陪伴的用户设计的 AI 伴读应用。它不仅仅是一个电子书阅读器，更是一个拥有“灵魂”的虚拟恋人。通过先进的 AI 技术，应用内的虚拟恋人会陪你一起阅读，在字里行间留下情感批注，与你讨论书中的细节，并记录下你们共同阅读的点点滴滴。
 
@@ -50,6 +52,11 @@ npm run dev
 2. 同步到安卓工程：`npm run android-sync`
 3. 使用 Android Studio 打开 `android` 目录进行打包。
 
+## ⚡ One-click Scripts
+
+- `android_release_studio.bat`
+  - Prepare and open Android Studio for release packaging
+
 ## 🧾 版本号与变更记录（重要）
 
 - **App 版本号**：来自 `package.json` 的 `version`
@@ -64,6 +71,23 @@ npm run dev
   - 在下面的 Changelog 追加一条记录
 
 ### Changelog
+
+- **0.0.5 / 2026-04-17.5**
+  - 调整：移除中文脚本文件名，统一改为英文脚本，避免 Windows cmd 解析闪退
+  - 新增：`android_offline_install.bat`
+  - 新增：`android_release_studio.bat`
+  - 更新：`npm run android:live` 直接调用 `android_live_core.bat`
+
+- **0.0.4 / 2026-04-17.4**
+  - 重构：脚本命名全部中文化，去掉“中文脚本套英文脚本”的重复层
+  - 新增：`安卓打包发布（Android Studio）.bat`
+  - 删除：`run-android-live.bat`、`build-android.bat`（由中文脚本替代）
+  - 更新：`npm run android:live` 直接调用中文调试脚本
+
+- **0.0.3 / 2026-04-17.3**
+  - 新增：中文一键脚本 `安卓调试模式（连接电脑）.bat`
+  - 新增：中文一键脚本 `安卓离线安装（可脱离电脑）.bat`
+  - 更新：版本号与构建号
 
 - **0.0.2 / 2026-04-17.2**
   - 修复：诊断面板版本号不再显示 `unknown`（稳定展示 `version/build`）

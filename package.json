@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "0.0.2",
+  "version": "0.0.5",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -12,12 +12,12 @@
     "static-build": "vite build",
     "android-sync": "npx cap sync",
     "android-open": "npx cap open android",
-    "android:live": "cmd /c run-android-live.bat",
     "build:all": "npm install && npm run static-build && npm run android-sync"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",
     "@capacitor/cli": "^8.3.0",
+    "@capacitor/clipboard": "^8.0.1",
     "@capacitor/core": "^8.3.0",
     "@capacitor/filesystem": "^8.1.2",
     "@capacitor/share": "^8.0.1",

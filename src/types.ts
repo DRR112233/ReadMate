@@ -54,6 +54,7 @@ export interface Book {
   hasSeenNote?: boolean;
   content?: string;
   originalEpub?: ArrayBuffer; // Store original EPUB for native rendering
+  originalTxt?: ArrayBuffer; // Keep bytes to avoid encoding garble
   lastReadPosition?: number;
   bookmarkAt?: number;
   bookmarkChapter?: string;

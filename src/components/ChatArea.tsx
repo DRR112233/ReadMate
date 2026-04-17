@@ -15,6 +15,7 @@ interface ChatAreaProps {
   onImportBook?: (book: Book) => void;
   companionName?: string;
   companionAvatar?: string;
+  getContextForAi?: () => string;
 }
 
 export default function ChatArea({ 
@@ -25,7 +26,8 @@ export default function ChatArea({
   onToggleMinimize, 
   onImportBook,
   companionName = '你的恋人',
-  companionAvatar = ''
+  companionAvatar = '',
+  getContextForAi
 }: ChatAreaProps) {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -81,7 +83,12 @@ export default function ChatArea({
     try {
       // Use the last few messages as context if needed, but for now just trigger
       const lastUserMsg = [...messages].reverse().find(m => m.sender === 'user');
-      const responseText = await sendMessage(lastUserMsg?.text || "请继续和我聊天吧");
+      const userText = lastUserMsg?.text || "请继续和我聊天吧";
+      const ctx = (getContextForAi?.() || '').trim();
+      const prompt = ctx
+        ? `用户正在阅读中与你聊天。\n\n【阅读上下文（截取）】\n${ctx}\n\n【用户消息】\n${userText}\n\n请你像恋人一样，简短、深情、贴合上下文地回复（50字以内）。`
+        : userText;
+      const responseText = await sendMessage(prompt);
       
       if (responseText) {
         const aiMsg: Message = {

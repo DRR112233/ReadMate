@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReadingArea from './components/ReadingArea';
 import Bookshelf from './components/Bookshelf';
 import Companion from './components/Companion';
@@ -55,6 +55,8 @@ export default function App() {
     return parseInt(date, 10);
   });
   const [readingTime, setReadingTime] = useState(() => parseInt(localStorage.getItem('app_readingTime') || '0', 10));
+  const readingSessionStartRef = useRef<number | null>(null);
+  const readingBaseMinutesRef = useRef<number>(parseInt(localStorage.getItem('app_readingTime') || '0', 10) || 0);
 
   useEffect(() => {
     const logKey = 'app_debugLogs';
@@ -133,17 +135,40 @@ export default function App() {
 
   useEffect(() => {
     let interval: any;
+
+    const flushMinutes = (mins: number) => {
+      setReadingTime(mins);
+      localStorage.setItem('app_readingTime', String(mins));
+      readingBaseMinutesRef.current = mins;
+    };
+
     if (activeTab === 'reading') {
+      if (!readingSessionStartRef.current) {
+        readingSessionStartRef.current = Date.now();
+        readingBaseMinutesRef.current = readingTime;
+      }
+      // Update UI periodically so用户不会一直看到 0
       interval = setInterval(() => {
-        setReadingTime(prev => {
-          const newTime = prev + 1;
-          localStorage.setItem('app_readingTime', newTime.toString());
-          return newTime;
-        });
-      }, 60000); // Add 1 minute every 60 seconds
+        const start = readingSessionStartRef.current;
+        if (!start) return;
+        const elapsedMs = Date.now() - start;
+        const addedMins = Math.floor(elapsedMs / 60000);
+        const next = Math.max(readingBaseMinutesRef.current, readingTime) + addedMins;
+        flushMinutes(next);
+      }, 10000); // every 10s
+    } else {
+      const start = readingSessionStartRef.current;
+      if (start) {
+        const elapsedMs = Date.now() - start;
+        const addedMins = Math.floor(elapsedMs / 60000);
+        const next = Math.max(readingBaseMinutesRef.current, readingTime) + addedMins;
+        flushMinutes(next);
+      }
+      readingSessionStartRef.current = null;
     }
+
     return () => clearInterval(interval);
-  }, [activeTab]);
+  }, [activeTab, readingTime]);
 
   useEffect(() => {
     localStorage.setItem('app_books', JSON.stringify(books));

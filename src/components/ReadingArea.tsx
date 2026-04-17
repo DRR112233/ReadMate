@@ -7,6 +7,7 @@ import ChatArea from './ChatArea';
 import { Annotation } from '../types';
 import Markdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import { isChapterTitleLine } from '../utils/chapter';
 
 interface ReadingAreaProps {
   book: Book;
@@ -161,6 +162,7 @@ export default function ReadingArea({
           quote: paragraph.substring(0, Math.min(paragraph.length, 30)), // Simplified quote
           aiResponse: response,
           date: Date.now(),
+          paragraphIdx: targetIdx,
         };
         
         onSaveJournal(newEntry);
@@ -245,25 +247,45 @@ export default function ReadingArea({
   }, [book.id]);
 
   const paragraphs = book.content ? book.content.split('\n').filter(p => p.trim().length > 0) : [];
-  const chapters = React.useMemo(() => {
-    const extractedChapters: { title: string, index: number }[] = [];
-    paragraphs.forEach((p, idx) => {
-      const text = p.trim();
-      const isChapter = text.length < 50 && (
-        /^第[零一二三四五六七八九十百千万\d]+[章回节卷集部篇]/.test(text) ||
-        /^Chapter\s*\d+/i.test(text) ||
-        (text.length > 0 && text.length < 20 && !text.includes('。') && !text.includes('，') && !text.includes('”') && !text.includes('？'))
-      );
-      if (isChapter) {
-        extractedChapters.push({ title: text, index: idx });
-      }
-    });
-    if (extractedChapters.length === 0 && paragraphs.length > 0) {
-      for (let i = 0; i < paragraphs.length; i += 30) {
-        extractedChapters.push({ title: `片段 ${Math.floor(i/30) + 1}`, index: i });
+  const fallbackQuoteParagraphIndex = React.useMemo(() => {
+    const result = new Map<string, number>();
+    const entries = journalEntries.filter(e => e.bookTitle === book.title && e.paragraphIdx === undefined);
+    for (const entry of entries) {
+      const quote = (entry.quote || '').trim();
+      if (!quote) continue;
+      const firstMatchIdx = paragraphs.findIndex((p) => p.includes(quote));
+      if (firstMatchIdx >= 0) {
+        result.set(entry.id, firstMatchIdx);
       }
     }
-    return extractedChapters;
+    return result;
+  }, [journalEntries, book.title, paragraphs]);
+  const chapters = React.useMemo(() => {
+    const extractedChapters: { title: string, index: number }[] = [];
+
+    const normalizeLine = (raw: string) => raw.trim().replace(/\s+/g, ' ');
+
+    paragraphs.forEach((p, idx) => {
+      const text = normalizeLine(p);
+      if (!isChapterTitleLine(text)) return;
+      extractedChapters.push({ title: text, index: idx });
+    });
+
+    // Fallback: if nothing matched, chunk by length so TOC is still usable.
+    if (extractedChapters.length === 0 && paragraphs.length > 0) {
+      for (let i = 0; i < paragraphs.length; i += 30) {
+        extractedChapters.push({ title: `片段 ${Math.floor(i / 30) + 1}`, index: i });
+      }
+    }
+
+    // Deduplicate consecutive identical titles (can happen with repeated headers).
+    const deduped: { title: string; index: number }[] = [];
+    for (const c of extractedChapters) {
+      const prev = deduped[deduped.length - 1];
+      if (prev && prev.title === c.title) continue;
+      deduped.push(c);
+    }
+    return deduped;
   }, [paragraphs]);
   
   const jumpToChapter = (index: number) => {
@@ -407,6 +429,7 @@ export default function ReadingArea({
   const handleAddManualNote = () => {
     const quoteToUse = activeQuote || selectedText;
     if (!quoteToUse || !noteText.trim()) return;
+    const resolvedParagraphIdx = activeParagraphIdx ?? getCurrentParagraphIdx();
 
     const newJournalId = Date.now().toString();
     const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: noteText, timestamp: Date.now() };
@@ -420,7 +443,7 @@ export default function ReadingArea({
       date: Date.now(),
       bookTitle: book.title,
       chatHistory: [userMsg],
-      paragraphIdx: activeParagraphIdx ?? undefined
+      paragraphIdx: resolvedParagraphIdx
     });
     
     // Trigger AI response to the user's note
@@ -439,7 +462,7 @@ export default function ReadingArea({
             date: Date.now(),
             bookTitle: book.title,
             chatHistory: [userMsg, aiMsg],
-            paragraphIdx: activeParagraphIdx ?? undefined
+            paragraphIdx: resolvedParagraphIdx
           });
         }
       } catch (error) {
@@ -453,7 +476,7 @@ export default function ReadingArea({
             date: Date.now(),
             bookTitle: book.title,
             chatHistory: [userMsg],
-            paragraphIdx: activeParagraphIdx ?? undefined
+            paragraphIdx: resolvedParagraphIdx
           });
         }
       }
@@ -478,11 +501,19 @@ export default function ReadingArea({
     setActiveQuote('');
     window.getSelection()?.removeAllRanges();
 
-    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: `我看到了这句话：“${quote}”`, timestamp: Date.now() };
+    const ctxIdx = activeParagraphIdx ?? getCurrentParagraphIdx();
+    const prev = paragraphs[Math.max(0, ctxIdx - 1)] || '';
+    const cur = paragraphs[ctxIdx] || '';
+    const next = paragraphs[Math.min(paragraphs.length - 1, ctxIdx + 1)] || '';
+    const contextBlock = [prev, cur, next].filter(Boolean).join('\n\n');
+
+    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: `我划线了这句话：“${quote}”`, timestamp: Date.now() };
     setMessages([userMsg]);
 
     try {
-      const res = await sendMessage(`我看到了这句话：“${quote}”。请你作为一个恋人，针对这句话给我回一条简短、深情的留言。`);
+      const res = await sendMessage(
+        `我在读《${book.title}》时划线了这句话：“${quote}”。\n\n为了给你更多语境，这里是这一段及上下文（上一段/本段/下一段）：\n${contextBlock}\n\n请你作为一个恋人，针对这句话写一条简短、深情的留言（50字以内）。`
+      );
       const aiMsg: Message = { id: (Date.now() + 1).toString(), sender: 'ai', text: res, timestamp: Date.now() };
       setMessages(prev => [...prev, aiMsg]);
       
@@ -614,25 +645,26 @@ export default function ReadingArea({
             {book.content ? (
               paragraphs.map((paragraph, idx) => {
                 // Find chat-based annotations
-                const chatNotes = journalEntries.filter(entry => 
-                  entry.bookTitle === book.title && 
-                  (entry.paragraphIdx === idx || (entry.paragraphIdx === undefined && (paragraph.includes(entry.quote) || entry.quote.includes(paragraph))))
-                );
+                const chatNotes = journalEntries.filter(entry => {
+                  if (entry.bookTitle !== book.title) return false;
+                  if (entry.paragraphIdx !== undefined) return entry.paragraphIdx === idx;
+                  return fallbackQuoteParagraphIndex.get(entry.id) === idx;
+                });
 
                 // Find manual annotations
-                const manualNotes = (book.annotations || []).filter(ann => 
-                  ann.paragraphIdx === idx || (ann.paragraphIdx === undefined && (paragraph.includes(ann.text) || ann.text.includes(paragraph)))
-                );
+                const manualNotes = (book.annotations || []).filter(ann => ann.paragraphIdx === idx);
 
                 const allNotes = [
                   ...chatNotes.map(n => ({ 
                     id: n.id, 
                     text: n.quote, 
-                    comment: n.aiResponse, 
-                    sender: n.userNote ? 'user' as const : 'ai' as const,
-                    chatHistory: n.chatHistory 
+                    kind: 'journal' as const,
+                    userNote: n.userNote,
+                    aiResponse: n.aiResponse,
+                    sender: (n.userNote ? 'user' : 'ai') as const,
+                    chatHistory: n.chatHistory,
                   })),
-                  ...manualNotes.map(n => ({ id: n.id, text: n.text, comment: n.comment, sender: n.sender, chatHistory: undefined }))
+                  ...manualNotes.map(n => ({ id: n.id, text: n.text, kind: 'manual' as const, comment: n.comment, sender: n.sender, chatHistory: undefined }))
                 ];
 
                 // Highlight the annotated text within the paragraph
@@ -659,7 +691,9 @@ export default function ReadingArea({
                                   e.stopPropagation();
                                   const selection = window.getSelection()?.toString();
                                   if (!selection) {
-                                    setExpandedParagraph(expandedParagraph === note.id ? null : note.id);
+                                    // Use paragraph-scoped key to avoid "one click opens multiple notes"
+                                    const key = `${idx}:${note.id}`;
+                                    setExpandedParagraph(expandedParagraph === key ? null : key);
                                   }
                                 }}
                               >
@@ -667,7 +701,7 @@ export default function ReadingArea({
                               </span>
                               {/* Inline Expandable Note */}
                               <AnimatePresence>
-                                {expandedParagraph === note.id && (
+                                {expandedParagraph === `${idx}:${note.id}` && (
                                   <motion.div 
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: 'auto' }}
@@ -677,23 +711,85 @@ export default function ReadingArea({
                                   >
                                     <div className="p-4 bg-[#f4ecd8]/60 rounded-2xl border border-[#e5e0d8] shadow-inner">
                                       <div className="flex flex-col gap-3">
-                                        <div className="flex items-center gap-2">
-                                          {note.sender === 'user' ? (
-                                            <div className="w-6 h-6 rounded-full bg-[#8E2A2A]/10 flex items-center justify-center text-[#8E2A2A]">
-                                              <PenTool size={12} />
+                                        {(() => {
+                                          const firstSender =
+                                            (note as any).chatHistory?.[0]?.sender ||
+                                            ((note as any).userNote ? 'user' : 'ai') ||
+                                            note.sender;
+                                          const topLabel = firstSender === 'user' ? '我的批注' : 'TA 的批注';
+                                          return (
+                                            <div className="flex items-center gap-2">
+                                              {firstSender === 'user' ? (
+                                                <div className="w-6 h-6 rounded-full bg-[#8E2A2A]/10 flex items-center justify-center text-[#8E2A2A]">
+                                                  <PenTool size={12} />
+                                                </div>
+                                              ) : (
+                                                <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center text-[#8E2A2A] shadow-sm">
+                                                  <Heart size={12} fill="currentColor" />
+                                                </div>
+                                              )}
+                                              <span className="text-xs font-serif font-bold text-gray-500">
+                                                {topLabel}
+                                              </span>
                                             </div>
-                                          ) : (
-                                            <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center text-[#8E2A2A] shadow-sm">
-                                              <Heart size={12} fill="currentColor" />
-                                            </div>
-                                          )}
-                                          <span className="text-xs font-serif font-bold text-gray-500">
-                                            {note.sender === 'user' ? '我的批注' : 'TA 的留言'}
-                                          </span>
-                                        </div>
+                                          );
+                                        })()}
                                         <div className="pl-8 font-serif text-sm text-[#2c2826] leading-relaxed">
-                                          {note.chatHistory && note.chatHistory.length > 0 ? (
-                                            <div className="space-y-3 font-serif text-sm">
+                                          {/* Always show the original note content (not replaced by replies). */}
+                                          {note.kind === 'journal' ? (
+                                            (() => {
+                                              const firstSender =
+                                                note.chatHistory?.[0]?.sender ||
+                                                (note.userNote ? 'user' : 'ai');
+                                              const blocks: Array<{ owner: 'user' | 'ai'; content: string }> = [];
+                                              if (note.userNote && note.userNote.trim()) {
+                                                blocks.push({ owner: 'user', content: note.userNote });
+                                              }
+                                              if (note.aiResponse && note.aiResponse.trim() && note.aiResponse !== '...') {
+                                                blocks.push({ owner: 'ai', content: note.aiResponse });
+                                              }
+                                              const userBlock = blocks.find((b) => b.owner === 'user');
+                                              const aiBlock = blocks.find((b) => b.owner === 'ai');
+                                              const ordered: Array<{ owner: 'user' | 'ai'; content: string }> =
+                                                blocks.length <= 1
+                                                  ? blocks
+                                                  : (firstSender === 'ai'
+                                                      ? [aiBlock, userBlock].filter((b): b is { owner: 'user' | 'ai'; content: string } => !!b)
+                                                      : [userBlock, aiBlock].filter((b): b is { owner: 'user' | 'ai'; content: string } => !!b));
+                                              return (
+                                                <div className="space-y-3">
+                                                  {ordered.map((b, bi) => (
+                                                    <div key={bi}>
+                                                      <div className="text-[10px] text-gray-400 mb-1">{b.owner === 'user' ? '我' : 'TA'}</div>
+                                                      {b.owner === 'user' ? (
+                                                        <div className="whitespace-pre-wrap font-hand text-2xl text-[#8E2A2A] tracking-wide transform -rotate-1">
+                                                          {b.content}
+                                                        </div>
+                                                      ) : (
+                                                        <div className="font-hand text-xl text-[#5b4636] leading-relaxed tracking-wide">
+                                                          <Markdown rehypePlugins={[rehypeRaw]}>{b.content}</Markdown>
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              );
+                                            })()
+                                          ) : (
+                                            note.sender === 'user' ? (
+                                              <div className="whitespace-pre-wrap font-hand text-2xl text-[#8E2A2A] tracking-wide transform -rotate-1">
+                                                {(note as any).comment}
+                                              </div>
+                                            ) : (
+                                              <div className="font-hand text-xl text-[#5b4636] leading-relaxed tracking-wide">
+                                                <Markdown rehypePlugins={[rehypeRaw]}>{(note as any).comment}</Markdown>
+                                              </div>
+                                            )
+                                          )}
+
+                                          {/* Replies drawer (chat-style only for the dialog thread). */}
+                                          {note.chatHistory && note.chatHistory.length > 0 && (
+                                            <div className="mt-3 border-l-2 border-[#e5e0d8] pl-3 space-y-2">
                                               {note.chatHistory.map((msg, i) => (
                                                 <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
                                                   <span className="text-[10px] text-gray-400 mb-1">{msg.sender === 'user' ? '我' : 'TA'}</span>
@@ -703,13 +799,6 @@ export default function ReadingArea({
                                                 </div>
                                               ))}
                                             </div>
-                                          ) : note.sender === 'ai' ? (
-                                            <div 
-                                              className="prose prose-sm prose-p:my-1"
-                                              dangerouslySetInnerHTML={{ __html: note.comment }}
-                                            />
-                                          ) : (
-                                            note.comment
                                           )}
                                         </div>
                                         <div className="pl-8 mt-2">
@@ -938,7 +1027,7 @@ export default function ReadingArea({
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               className={`fixed top-0 left-0 bottom-0 w-[80%] max-w-[300px] z-[120] flex flex-col shadow-2xl ${theme === 'dark' ? 'bg-[#1a1a1a] text-white' : theme === 'sepia' ? 'bg-[#f4ecd8] text-[#5b4636]' : 'bg-[#fdfbf7] text-[#2c2826]'}`}
             >
-              <div className="p-6 border-b border-[#e5e0d8] flex items-center justify-between">
+              <div className={`p-6 flex items-center justify-between border-b ${theme === 'dark' ? 'border-gray-800' : 'border-[#e5e0d8]'}`}>
                 <h3 className="font-serif font-bold text-lg">目录</h3>
                 <button onClick={() => setShowTOC(false)} className="text-gray-400"><X size={20} /></button>
               </div>
@@ -949,9 +1038,17 @@ export default function ReadingArea({
                       <button 
                         key={i}
                         onClick={() => jumpToChapter(chapter.index)}
-                        className={`w-full text-left p-3 rounded-xl transition-colors hover:bg-[#8E2A2A]/5 flex items-center gap-3 font-bold text-[#8E2A2A]`}
+                        className={`w-full text-left p-3 rounded-xl transition-colors flex items-center gap-3 font-bold ${
+                          theme === 'dark'
+                            ? 'text-gray-100 hover:bg-white/5'
+                            : theme === 'sepia'
+                              ? 'text-[#5b4636] hover:bg-[#8E2A2A]/5'
+                              : 'text-[#2c2826] hover:bg-[#8E2A2A]/5'
+                        }`}
                       >
-                        <span className="text-xs text-gray-400 font-mono w-6">{(i + 1).toString().padStart(2, '0')}</span>
+                        <span className={`text-xs font-mono w-6 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-400'}`}>
+                          {(i + 1).toString().padStart(2, '0')}
+                        </span>
                         <span className="truncate">{chapter.title}</span>
                       </button>
                     ))}
@@ -1119,6 +1216,19 @@ export default function ReadingArea({
                   onImportBook={onImportBook}
                   companionName={companionName}
                   companionAvatar={companionAvatar}
+                  getContextForAi={() => {
+                    const idx = getCurrentParagraphIdx();
+                    const before = paragraphs.slice(Math.max(0, idx - 2), idx).join('\n\n');
+                    const core = paragraphs[idx] || '';
+                    const after = paragraphs.slice(idx + 1, Math.min(paragraphs.length, idx + 3)).join('\n\n');
+                    const clip = (s: string, maxLen: number) => (s.length > maxLen ? s.slice(-maxLen) : s);
+                    const clipHead = (s: string, maxLen: number) => (s.length > maxLen ? s.slice(0, maxLen) : s);
+                    return [
+                      `【前文】${clip(before, 260)}`,
+                      `【核心】${core}`,
+                      `【后文】${clipHead(after, 260)}`,
+                    ].filter(Boolean).join('\n\n');
+                  }}
                 />
               </div>
             </motion.div>

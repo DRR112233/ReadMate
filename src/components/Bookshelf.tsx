@@ -4,6 +4,7 @@ import { Heart, Search, Plus, X, Link as LinkIcon, Loader2, BookOpen, Trash2, Ch
 import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjsLib from 'pdfjs-dist';
 import ePub from 'epubjs';
+import { chaptersToContent, splitTxtIntoChapters } from '../utils/chapter';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
@@ -75,6 +76,32 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
       reader.readAsDataURL(blob);
     });
 
+  const fileToArrayBuffer = (file: File): Promise<ArrayBuffer> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => resolve(event.target?.result as ArrayBuffer);
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+    });
+
+  const decodeBestEffort = (buf: ArrayBuffer, encodings: string[]) => {
+    const bytes = new Uint8Array(buf);
+    const candidates = encodings.map((encoding) => {
+      try {
+        const decoder = new TextDecoder(encoding as any, { fatal: false });
+        const text = decoder.decode(bytes);
+        const replacementCount = (text.match(/\uFFFD/g) || []).length;
+        // Rough garble heuristic: lots of � means wrong encoding.
+        const score = replacementCount;
+        return { encoding, text, score };
+      } catch {
+        return { encoding, text: '', score: Number.POSITIVE_INFINITY };
+      }
+    });
+    candidates.sort((a, b) => a.score - b.score);
+    return candidates[0];
+  };
+
   const normalizeTextBlock = (text: string) =>
     text
       .replace(/\u00a0/g, ' ')
@@ -107,14 +134,21 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
       let cover = `https://picsum.photos/seed/${Date.now()}/300/400`;
 
       let originalEpubBuffer: ArrayBuffer | undefined;
+      let originalTxtBuffer: ArrayBuffer | undefined;
 
       if (file.name.endsWith('.txt')) {
-        content = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (event) => resolve(event.target?.result as string);
-          reader.onerror = reject;
-          reader.readAsText(file);
-        });
+        // Do NOT rely on browser default encoding; it causes garbled text for GBK/GB18030 etc.
+        // Read bytes first, then decode with common encodings and pick the least-garbled one.
+        originalTxtBuffer = await fileToArrayBuffer(file);
+        const best = decodeBestEffort(originalTxtBuffer, [
+          'utf-8',
+          'gb18030', // covers gbk/gb2312 in most modern environments
+          'gbk',
+          'big5',
+        ]);
+        // Split into chapters and rebuild with normalized chapter-title lines.
+        const chapters = splitTxtIntoChapters(best.text);
+        content = chaptersToContent(chapters);
       } else if (file.name.endsWith('.pdf')) {
         const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
           const reader = new FileReader();
@@ -124,34 +158,80 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
         });
         const typedarray = new Uint8Array(arrayBuffer);
         const pdf = await pdfjsLib.getDocument(typedarray).promise;
+
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
           const textContent = await page.getTextContent();
-          let text = '';
-          let lastY: number | null = null;
-          let lastX: number | null = null;
-          const lineBreakThreshold = 2;
-          const wordGapThreshold = 3;
 
-          for (const item of textContent.items as any[]) {
-            const raw = (item.str || '') as string;
-            const str = raw.replace(/\s+/g, ' ').trim();
-            if (!str) continue;
-            const y = item.transform?.[5] ?? 0;
-            const x = item.transform?.[4] ?? 0;
+          const items = (textContent.items as any[])
+            .map((item) => {
+              const raw = String(item.str || '').replace(/\s+/g, ' ').trim();
+              if (!raw) return null;
+              const y = item.transform?.[5] ?? 0;
+              const x = item.transform?.[4] ?? 0;
+              const w = (item.width as number) || raw.length * 5;
+              return { raw, x, y, w };
+            })
+            .filter(Boolean) as Array<{ raw: string; x: number; y: number; w: number }>;
 
-            if (lastY !== null && Math.abs(y - lastY) > lineBreakThreshold) {
-              text += '\n';
-            } else if (lastX !== null && x - lastX > wordGapThreshold) {
-              text += ' ';
+          // Sort roughly in reading order (top->down, left->right)
+          items.sort((a, b) => (b.y - a.y) || (a.x - b.x));
+
+          // Group into lines by y proximity
+          const lineYThreshold = 2.2;
+          const lines: Array<{ y: number; parts: Array<{ x: number; text: string }> }> = [];
+          for (const it of items) {
+            const line = lines.find((l) => Math.abs(l.y - it.y) <= lineYThreshold);
+            if (line) {
+              line.parts.push({ x: it.x, text: it.raw });
+              // Keep representative y stable
+              line.y = (line.y + it.y) / 2;
+            } else {
+              lines.push({ y: it.y, parts: [{ x: it.x, text: it.raw }] });
             }
-
-            text += str;
-            lastY = y;
-            lastX = x + ((item.width as number) || str.length * 5);
           }
 
-          content += normalizeTextBlock(text) + '\n\n';
+          // Build line strings
+          const builtLines = lines
+            .sort((a, b) => b.y - a.y)
+            .map((l) => {
+              l.parts.sort((a, b) => a.x - b.x);
+              // Join with a space only when it looks like English word spacing.
+              let out = '';
+              let lastX: number | null = null;
+              for (const p of l.parts) {
+                const t = p.text;
+                if (!t) continue;
+                if (out && lastX !== null && p.x - lastX > 6) out += ' ';
+                out += t;
+                lastX = p.x + t.length * 5;
+              }
+              return out.trim();
+            })
+            .filter(Boolean);
+
+          // Convert lines to paragraphs using line gaps
+          let pageText = '';
+          let prevY: number | null = null;
+          const sortedLines = lines.sort((a, b) => b.y - a.y);
+          for (let li = 0; li < sortedLines.length; li++) {
+            const y = sortedLines[li].y;
+            const lineText = builtLines[li] || '';
+            if (!lineText) continue;
+            if (prevY !== null) {
+              const gap = Math.abs(prevY - y);
+              // Larger gaps often indicate paragraph breaks.
+              if (gap > 14) {
+                pageText += '\n\n';
+              } else {
+                pageText += '\n';
+              }
+            }
+            pageText += lineText;
+            prevY = y;
+          }
+
+          content += normalizeTextBlock(pageText) + '\n\n';
         }
       } else if (file.name.endsWith('.epub')) {
         const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -255,8 +335,10 @@ export default function Bookshelf({ books, onOpenBook, onImportBook, onDeleteBoo
         author: author,
         cover: cover,
         progress: 0,
-        content: content.trim() || '无法提取文件内容。',
-        originalEpub: originalEpubBuffer
+        content: normalizeTextBlock(content) || '无法提取文件内容。',
+        originalEpub: originalEpubBuffer,
+        // Keep original bytes so we can re-decode later if user reports garble.
+        originalTxt: originalTxtBuffer
       };
       onImportBook(newBook);
     } catch (error) {
